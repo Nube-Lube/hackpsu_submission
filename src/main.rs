@@ -16,17 +16,19 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
-use board::{Board, CAMERA_WEIGHT, Event, Sighting, ThreatView, WORKER_WEIGHT};
+use board::{Board, CAMERA_WEIGHT, Event, Pos, Sighting, ThreatView, WORKER_WEIGHT};
 use gemini::{Hazard, Severity};
 use serde::{Deserialize, Serialize};
 use vision::Vision;
 
 const LOG_LEN: usize = 50; // events kept for the dashboard
 const OFFLINE_AFTER: Duration = Duration::from_secs(10);
+const POSITIONS_FILE: &str = "positions.json"; // where cameras sit on the map, kept across restarts
 
 struct AppState {
     vision: Vision,
     cameras: Mutex<HashMap<String, Camera>>,
+    positions: Mutex<HashMap<String, Pos>>, // camera name -> spot on the floor-plan map
     board: Mutex<Board>,
     log: Mutex<VecDeque<Logged>>,
     // All cameras share one Gemini quota, so calls are spaced globally (15/min on Flash Lite).
@@ -68,6 +70,13 @@ struct IdQuery {
     id: u64,
 }
 
+#[derive(Deserialize)]
+struct PlaceQuery {
+    camera: String,
+    x: f32,
+    y: f32,
+}
+
 // What the worker report page sends.
 #[derive(Deserialize)]
 struct Report {
@@ -76,6 +85,7 @@ struct Report {
     severity: Severity,
     location: String,
     note: String,
+    pos: Option<Pos>, // where they tapped on the map, if they did
 }
 
 // What a camera page gets back after each frame/tick.
@@ -100,6 +110,7 @@ struct CameraView {
     online: bool,
     frame_version: u64, // 0 = no frame yet
     raw: Vec<Hazard>,
+    pos: Option<Pos>,   // None = not placed on the map yet
 }
 
 // `hackpsu`            start the server on port 3000
@@ -123,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         vision,
         cameras: Mutex::default(),
+        positions: Mutex::new(load_positions()),
         board: Mutex::new(Board::new(config.critical_after())),
         log: Mutex::default(),
         next_gemini_call: Mutex::new(Instant::now()),
@@ -147,6 +159,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/report", get(|| async { Html(include_str!("../static/report.html")) }).post(report))
         .route("/analyze", post(analyze))
         .route("/resolve", post(resolve))
+        .route("/place", post(place))
+        .route("/floorplan", get(floorplan))
         .route("/state", get(overview))
         .route("/kinds", get(|State(s): State<Arc<AppState>>| async move { Json(s.kinds.clone()) }))
         .route("/frame", get(frame))
@@ -202,6 +216,17 @@ fn print_qr(url: &str) {
         let qr = code.render::<Dense1x2>().dark_color(Dense1x2::Light).light_color(Dense1x2::Dark).build();
         println!("scan to open the camera page:\n{qr}");
     }
+}
+
+fn load_positions() -> HashMap<String, Pos> {
+    std::fs::read_to_string(POSITIONS_FILE)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn clamp(p: Pos) -> Pos {
+    Pos { x: p.x.clamp(0.0, 1.0), y: p.y.clamp(0.0, 1.0) }
 }
 
 impl AppState {
@@ -268,11 +293,14 @@ async fn analyze(
         cam.last_raw.clone()
     };
 
+    // Hazards a camera sees are placed at the camera's spot on the map.
+    let pos = state.positions.lock().unwrap().get(&name).copied();
     let mut events = Vec::new();
     let active = {
         let mut board = state.board.lock().unwrap();
         for hazard in report.map(|r| r.hazards).unwrap_or_default() {
-            events.extend(board.sight(Sighting { hazard, source: name.clone(), weight: CAMERA_WEIGHT }, now));
+            let sighting = Sighting { hazard, source: name.clone(), pos, weight: CAMERA_WEIGHT };
+            events.extend(board.sight(sighting, now));
         }
         board.confirmed(now, Some(&name))
     };
@@ -294,7 +322,7 @@ async fn report(State(state): State<Arc<AppState>>, Json(r): Json<Report>) -> Re
         location: r.location.chars().take(200).collect(),
         reason: r.note.chars().take(500).collect(),
     };
-    let sighting = Sighting { hazard, source: source.clone(), weight: WORKER_WEIGHT };
+    let sighting = Sighting { hazard, source: source.clone(), pos: r.pos.map(clamp), weight: WORKER_WEIGHT };
     let events = state.board.lock().unwrap().sight(sighting, Instant::now());
     state.log_events(&source, events);
     Ok(StatusCode::NO_CONTENT)
@@ -312,8 +340,29 @@ async fn resolve(State(state): State<Arc<AppState>>, Query(q): Query<IdQuery>) -
     }
 }
 
+// The dashboard drags a camera onto the map.
+async fn place(State(state): State<Arc<AppState>>, Query(q): Query<PlaceQuery>) -> StatusCode {
+    let mut positions = state.positions.lock().unwrap();
+    positions.insert(q.camera, clamp(Pos { x: q.x, y: q.y }));
+    match serde_json::to_string_pretty(&*positions).map(|json| std::fs::write(POSITIONS_FILE, json)) {
+        Ok(Ok(())) => StatusCode::NO_CONTENT,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+// Optional floor-plan image next to the server; the dashboard draws a plain grid without one.
+async fn floorplan() -> impl IntoResponse {
+    for (file, mime) in [("floorplan.png", "image/png"), ("floorplan.jpg", "image/jpeg")] {
+        if let Ok(bytes) = tokio::fs::read(file).await {
+            return ([(header::CONTENT_TYPE, mime)], bytes).into_response();
+        }
+    }
+    StatusCode::NOT_FOUND.into_response()
+}
+
 async fn overview(State(state): State<Arc<AppState>>) -> Json<Overview> {
     let now = Instant::now();
+    let positions = state.positions.lock().unwrap().clone();
     let mut cameras: Vec<CameraView> = state
         .cameras
         .lock()
@@ -324,6 +373,7 @@ async fn overview(State(state): State<Arc<AppState>>) -> Json<Overview> {
             online: cam.last_seen.is_some_and(|t| now - t < OFFLINE_AFTER),
             frame_version: cam.frame_version,
             raw: cam.last_raw.clone(),
+            pos: positions.get(name).copied(),
         })
         .collect();
     cameras.sort_by(|a, b| a.name.cmp(&b.name));

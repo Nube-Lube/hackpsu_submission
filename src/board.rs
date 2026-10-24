@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::gemini::{Hazard, Severity};
 
@@ -11,13 +11,33 @@ const HALF_LIFE: Duration = Duration::from_secs(30);
 const CONFIRM_SCORE: f64 = 1.5;
 const FADE_SCORE: f64 = 0.25; // below this, unconfirmed and low-severity threats are dropped
 const STALE_AFTER: Duration = Duration::from_secs(60); // "not seen recently" on the dashboard
+// Sightings of the same kind this close (fraction of the map) are treated as the same threat,
+// if that threat is confirmed or was seen within MATCH_WINDOW. This lets a moving threat
+// build up score across several cameras.
+const MATCH_RADIUS: f32 = 0.15;
+const MATCH_WINDOW: Duration = Duration::from_secs(60);
+const TRAIL_LEN: usize = 10;
 pub const CAMERA_WEIGHT: f64 = 1.0;
 pub const WORKER_WEIGHT: f64 = 2.0; // a person reporting it confirms on the spot
+
+/// A point on the floor-plan map; both axes run 0..1.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Pos {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Pos {
+    fn distance(self, other: Pos) -> f32 {
+        (self.x - other.x).hypot(self.y - other.y)
+    }
+}
 
 /// One report of a hazard, from a camera frame or a worker.
 pub struct Sighting {
     pub hazard: Hazard,
-    pub source: String, // camera name, or "worker: <name>"
+    pub source: String,   // camera name, or "worker: <name>"
+    pub pos: Option<Pos>, // None if the camera isn't placed on the map / worker didn't tap one
     pub weight: f64,
 }
 
@@ -33,7 +53,8 @@ pub struct Board {
 struct Threat {
     id: u64,
     hazard: Hazard, // latest description; severity is the highest seen
-    source: String,
+    sources: Vec<String>, // every camera/worker that has reported it, first one first
+    trail: Vec<Pos>,      // where it has been seen, oldest first; last = current position
     score: f64,
     scored_at: Instant, // when `score` was last decayed
     last_seen: Instant,
@@ -51,6 +72,20 @@ impl Threat {
     fn needs_person(&self) -> bool {
         self.hazard.severity >= Severity::Medium
     }
+
+    fn matches(&self, s: &Sighting, now: Instant) -> bool {
+        if self.hazard.kind != s.hazard.kind {
+            return false;
+        }
+        match (self.trail.last(), s.pos) {
+            (Some(&here), Some(there)) => {
+                here.distance(there) <= MATCH_RADIUS
+                    && (self.confirmed_at.is_some() || now - self.last_seen <= MATCH_WINDOW)
+            }
+            // Without positions, fall back to "same camera / same worker".
+            _ => self.sources.contains(&s.source),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -58,7 +93,8 @@ pub struct ThreatView {
     pub id: u64,
     #[serde(flatten)]
     pub hazard: Hazard,
-    pub source: String,
+    pub sources: Vec<String>,
+    pub trail: Vec<Pos>,
     pub critical: bool,
     pub stale: bool,          // confirmed but not seen for a while (still needs resolving)
     pub seconds: u64,         // since confirmed
@@ -88,22 +124,32 @@ impl Board {
     /// Add a sighting: reinforces a matching threat or starts a new one.
     pub fn sight(&mut self, s: Sighting, now: Instant) -> Vec<Event> {
         let mut events = Vec::new();
-        // For now a sighting matches a threat of the same kind from the same source.
-        // (Positions will let nearby cameras reinforce each other.)
-        let existing = self.threats.iter().position(|t| t.hazard.kind == s.hazard.kind && t.source == s.source);
+        let existing = self.threats.iter().position(|t| t.matches(&s, now));
         let t = match existing {
             Some(i) => {
                 let t = &mut self.threats[i];
                 t.decay(now);
                 let severity = t.hazard.severity.max(s.hazard.severity);
                 t.hazard = Hazard { severity, ..s.hazard };
+                if !t.sources.contains(&s.source) {
+                    t.sources.push(s.source);
+                }
+                if let Some(pos) = s.pos
+                    && t.trail.last() != Some(&pos)
+                {
+                    t.trail.push(pos);
+                    if t.trail.len() > TRAIL_LEN {
+                        t.trail.remove(0);
+                    }
+                }
                 t
             }
             None => {
                 self.threats.push(Threat {
                     id: self.next_id,
                     hazard: s.hazard,
-                    source: s.source,
+                    sources: vec![s.source],
+                    trail: s.pos.into_iter().collect(),
                     score: 0.0,
                     scored_at: now,
                     last_seen: now,
@@ -161,17 +207,18 @@ impl Board {
         Some(Event::Resolved { id, kind: t.hazard.kind, by: Resolver::Person })
     }
 
-    /// Confirmed threats, most urgent first. `source` limits it to one camera.
+    /// Confirmed threats, most urgent first. `source` limits it to ones that camera has reported.
     pub fn confirmed(&self, now: Instant, source: Option<&str>) -> Vec<ThreatView> {
         let mut out: Vec<ThreatView> = self
             .threats
             .iter()
-            .filter(|t| source.is_none_or(|s| t.source == s))
+            .filter(|t| source.is_none_or(|s| t.sources.iter().any(|x| x == s)))
             .filter_map(|t| {
                 Some(ThreatView {
                     id: t.id,
                     hazard: t.hazard.clone(),
-                    source: t.source.clone(),
+                    sources: t.sources.clone(),
+                    trail: t.trail.clone(),
                     critical: t.critical,
                     stale: now - t.last_seen >= STALE_AFTER,
                     seconds: (now - t.confirmed_at?).as_secs(),
@@ -201,8 +248,13 @@ mod tests {
         Sighting {
             hazard: Hazard { kind: kind.into(), severity, location: "floor".into(), reason: "test".into() },
             source: CAM.into(),
+            pos: None,
             weight,
         }
+    }
+
+    fn seen_at(kind: &str, source: &str, x: f32) -> Sighting {
+        Sighting { source: source.into(), pos: Some(Pos { x, y: 0.5 }), ..seen(kind, Severity::High, CAMERA_WEIGHT) }
     }
 
     fn secs(n: u64) -> Duration {
@@ -277,6 +329,30 @@ mod tests {
         let events = b.tick(t0 + secs(16));
         assert!(matches!(&events[..], [Event::Critical { .. }]));
         assert!(b.confirmed(t0 + secs(16), None)[0].critical);
+    }
+
+    #[test]
+    fn moving_threat_confirms_across_nearby_cameras() {
+        let mut b = board();
+        let t0 = Instant::now();
+        // Seen once by each of two cameras 10% of the map apart: one threat, now confirmed.
+        assert!(b.sight(seen_at("intruder", "Dock", 0.40), t0).is_empty());
+        let events = b.sight(seen_at("intruder", "Lobby", 0.50), t0 + secs(5));
+        assert!(matches!(&events[..], [Event::Detected { .. }]));
+        let view = b.confirmed(t0 + secs(5), None);
+        assert_eq!(view.len(), 1);
+        assert_eq!(view[0].sources, ["Dock", "Lobby"]);
+        assert_eq!(view[0].trail.len(), 2);
+    }
+
+    #[test]
+    fn far_apart_sightings_stay_separate() {
+        let mut b = board();
+        let t0 = Instant::now();
+        b.sight(seen_at("spill", "Dock", 0.1), t0);
+        b.sight(seen_at("spill", "Gate", 0.9), t0);
+        assert_eq!(b.threats.len(), 2);
+        assert!(b.confirmed(t0, None).is_empty());
     }
 
     #[test]

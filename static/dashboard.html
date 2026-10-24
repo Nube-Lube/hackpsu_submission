@@ -12,14 +12,35 @@
     a { color: #f0b429; }
     main { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; }
     h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; margin: 0 0 8px; }
-    #cameras { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-content: start; }
+    section + section { margin-top: 20px; }
+    .muted { color: #777; font-size: 12px; }
+
+    /* Site map: positions are fractions (0..1) of the map's width and height. */
+    #map { position: relative; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; touch-action: none;
+           background-color: #161616;
+           background-image: linear-gradient(#262626 1px, transparent 1px), linear-gradient(90deg, #262626 1px, transparent 1px);
+           background-size: 10% 10%; }
+    #plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    #trails { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .marker { position: absolute; transform: translate(-50%, -50%); }
+    .cam { padding: 3px 8px; border-radius: 12px; background: #2a2a2a; border: 1px solid #555; font-size: 12px; white-space: nowrap; cursor: grab; user-select: none; touch-action: none; }
+    .cam.offline { opacity: .5; }
+    .cam.dragging { position: fixed; z-index: 10; cursor: grabbing; transform: translate(-50%, -50%); }
+    .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #111; }
+    .dot.low { background: #e0c341; } .dot.medium { background: #f08a24; } .dot.high { background: #e5383b; }
+    .dot.critical { background: #ff1f3d; animation: ping 1s infinite; }
+    @keyframes ping { 50% { box-shadow: 0 0 0 10px rgba(255, 31, 61, .25); } }
+    #tray { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; min-height: 26px; }
+    #tray .cam { position: static; }
+
+    #cameras { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
     .tile { background: #1a1a1a; border-radius: 8px; overflow: hidden; }
     .tile img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; display: block; }
     .tile .info { padding: 10px; font-size: 14px; }
     .tile .name { font-weight: 700; }
-    .muted { color: #777; font-size: 12px; }
+
     .threat { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; font-size: 14px; }
-    .low { border-color: #e0c341; } .medium { border-color: #f08a24; } .high { border-color: #e5383b; }
+    .threat.low { border-color: #e0c341; } .threat.medium { border-color: #f08a24; } .threat.high { border-color: #e5383b; }
     .threat.critical { border-color: #ff1f3d; background: #3a0d12; }
     .threat.stale { opacity: .65; }
     .kind { font-weight: 600; text-transform: capitalize; }
@@ -28,7 +49,6 @@
     #banner.on { display: block; animation: pulse 1s infinite alternate; }
     @keyframes pulse { to { background: #7a0a13; } }
     #log div { font-size: 13px; color: #bbb; padding: 4px 0; border-bottom: 1px solid #1f1f1f; }
-    section + section { margin-top: 20px; }
     @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -40,6 +60,16 @@
   </header>
   <main>
     <div>
+      <section>
+        <h2>Site map</h2>
+        <div id="map">
+          <img id="plan" src="/floorplan" alt="">
+          <svg id="trails" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
+          <div id="markers"></div>
+        </div>
+        <div id="tray"></div>
+        <p class="muted">Drag cameras onto the map where they are. Add a floorplan.png next to the server to use a real floor plan.</p>
+      </section>
       <section>
         <h2>Cameras</h2>
         <div id="cameras"></div>
@@ -66,6 +96,76 @@
       if (text !== undefined) e.textContent = text;
       return e;
     };
+    const place = (node, pos) => { node.style.left = `${pos.x * 100}%`; node.style.top = `${pos.y * 100}%`; };
+
+    // Use the floor plan's own shape so map positions line up with the picture.
+    $('plan').onload = () => {
+      $('map').style.aspectRatio = `${$('plan').naturalWidth} / ${$('plan').naturalHeight}`;
+      $('plan').style.display = 'block';
+    };
+
+    // Dragging a camera chip onto the map saves its position on the server.
+    let dragging = false;
+    function makeDraggable(chip, name) {
+      chip.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        dragging = true;
+        chip.setPointerCapture(e.pointerId);
+        chip.classList.add('dragging');
+        const follow = ev => { chip.style.left = `${ev.clientX}px`; chip.style.top = `${ev.clientY}px`; };
+        follow(e);
+        chip.onpointermove = follow;
+        chip.onpointerup = async ev => {
+          chip.onpointermove = chip.onpointerup = null;
+          const r = $('map').getBoundingClientRect();
+          const x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+          if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+            await fetch(`/place?camera=${encodeURIComponent(name)}&x=${x}&y=${y}`, { method: 'POST' });
+          }
+          dragging = false;
+          poll();
+        };
+      });
+    }
+
+    function renderMap(cameras, threats) {
+      if (dragging) return; // don't rebuild the chip that's being dragged
+      const markers = [], tray = [];
+      for (const cam of cameras) {
+        const chip = el('div', `cam${cam.online ? '' : ' offline'}`, `📷 ${cam.name}`);
+        makeDraggable(chip, cam.name);
+        if (cam.pos) {
+          chip.classList.add('marker');
+          place(chip, cam.pos);
+          markers.push(chip);
+        } else {
+          tray.push(chip);
+        }
+      }
+      const lines = [];
+      for (const t of threats) {
+        const here = t.trail[t.trail.length - 1];
+        if (!here) continue; // no position (unplaced camera, or worker didn't tap the map)
+        const dot = el('div', `marker dot ${t.critical ? 'critical' : t.severity}`);
+        dot.title = `${label(t.kind)}: ${t.reason}`;
+        place(dot, here);
+        markers.push(dot);
+        if (t.trail.length > 1) {
+          // Where a moving threat has been, drawn as a line through its sightings.
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+          line.setAttribute('points', t.trail.map(p => `${p.x},${p.y}`).join(' '));
+          line.setAttribute('fill', 'none');
+          line.setAttribute('stroke', t.critical ? '#ff1f3d' : '#f08a24');
+          line.setAttribute('stroke-width', '3');
+          line.setAttribute('stroke-dasharray', '6 4');
+          line.setAttribute('vector-effect', 'non-scaling-stroke');
+          lines.push(line);
+        }
+      }
+      $('markers').replaceChildren(...markers);
+      $('trails').replaceChildren(...lines);
+      $('tray').replaceChildren(...tray);
+    }
 
     // Camera tiles are kept between polls so images only reload when a new frame exists.
     const tiles = new Map(); // camera name -> { img, info, version }
@@ -98,7 +198,7 @@
         el('div', 'kind', `${label(t.kind)} · ${status}`),
         el('div', '', t.location),
         el('div', '', t.reason),
-        el('div', 'muted', `${t.source} · ${t.seconds}s ago${t.stale ? ' · not seen recently' : ''}` +
+        el('div', 'muted', `${t.sources.join(' → ')} · ${t.seconds}s ago${t.stale ? ' · not seen recently' : ''}` +
           (t.needs_person ? '' : ' · fades on its own')),
       );
       const button = el('button', '', 'Resolve');
@@ -112,12 +212,13 @@
     }
 
     function render({ cameras, threats, log }) {
+      renderMap(cameras, threats);
       $('no-cameras').hidden = cameras.length > 0;
       cameras.forEach(renderCamera);
 
       $('threats').replaceChildren(...(threats.length ? threats.map(renderThreat) : [el('p', 'muted', 'No threats.')]));
 
-      const critical = threats.filter(t => t.critical).map(t => `${label(t.kind)} (${t.source})`);
+      const critical = threats.filter(t => t.critical).map(t => `${label(t.kind)} (${t.sources.at(-1)})`);
       $('banner').className = critical.length ? 'on' : '';
       $('banner').textContent = critical.length ? `⚠ CRITICAL: ${critical.join(' · ').toUpperCase()}` : '';
 

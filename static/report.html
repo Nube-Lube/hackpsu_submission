@@ -18,6 +18,13 @@
     #result { margin-top: 14px; font-weight: 600; }
     .ok { color: #6fd08c; } .err { color: #ff6b6b; }
     a { color: #f0b429; }
+    #map { position: relative; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; cursor: crosshair;
+           background-color: #161616;
+           background-image: linear-gradient(#262626 1px, transparent 1px), linear-gradient(90deg, #262626 1px, transparent 1px);
+           background-size: 10% 10%; }
+    #plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    #pin { position: absolute; display: none; width: 18px; height: 18px; border-radius: 50%; background: #f0b429;
+           border: 2px solid #111; transform: translate(-50%, -50%); }
   </style>
 </head>
 <body>
@@ -36,6 +43,8 @@
       </select>
       <label for="location">Where?</label>
       <input id="location" maxlength="200" placeholder="e.g. bay 3, by the loading door" required>
+      <label>Tap the map where it is (optional)</label>
+      <div id="map"><img id="plan" src="/floorplan" alt=""><div id="pin"></div></div>
       <label for="note">Details</label>
       <textarea id="note" maxlength="500" placeholder="What did you see?"></textarea>
       <button id="send">Send report</button>
@@ -48,6 +57,20 @@
     const label = kind => kind.replaceAll('_', ' ');
 
     try { $('name').value = localStorage.getItem('workerName') || ''; } catch {}
+
+    // Map position as fractions (0..1) of the map, same as the dashboard.
+    let pos = null;
+    $('plan').onload = () => {
+      $('map').style.aspectRatio = `${$('plan').naturalWidth} / ${$('plan').naturalHeight}`;
+      $('plan').style.display = 'block';
+    };
+    $('map').addEventListener('click', e => {
+      const r = $('map').getBoundingClientRect();
+      pos = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+      $('pin').style.left = `${pos.x * 100}%`;
+      $('pin').style.top = `${pos.y * 100}%`;
+      $('pin').style.display = 'block';
+    });
 
     // Hazard kinds come from the server's hazards.toml.
     fetch('/kinds').then(r => r.json()).then(kinds => {
@@ -69,7 +92,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: $('name').value, kind: $('kind').value, severity: $('severity').value,
-            location: $('location').value, note: $('note').value,
+            location: $('location').value, note: $('note').value, pos,
           }),
         });
         if (!res.ok) throw new Error(await res.text());
@@ -77,6 +100,8 @@
         $('result').textContent = 'Reported. It is on the dashboard now.';
         $('location').value = '';
         $('note').value = '';
+        pos = null;
+        $('pin').style.display = 'none';
       } catch (err) {
         $('result').className = 'err';
         $('result').textContent = `Could not send: ${err.message}`;
