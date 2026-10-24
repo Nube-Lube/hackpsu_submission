@@ -1,7 +1,7 @@
+mod board;
 mod config;
 mod gemini;
 mod openai;
-mod rules;
 mod vision;
 
 use std::collections::{HashMap, VecDeque};
@@ -16,10 +16,10 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
-use gemini::Hazard;
-use vision::Vision;
-use rules::{Active, Event, Tracker};
+use board::{Board, CAMERA_WEIGHT, Event, Sighting, ThreatView, WORKER_WEIGHT};
+use gemini::{Hazard, Severity};
 use serde::{Deserialize, Serialize};
+use vision::Vision;
 
 const LOG_LEN: usize = 50; // events kept for the dashboard
 const OFFLINE_AFTER: Duration = Duration::from_secs(10);
@@ -27,25 +27,26 @@ const OFFLINE_AFTER: Duration = Duration::from_secs(10);
 struct AppState {
     vision: Vision,
     cameras: Mutex<HashMap<String, Camera>>,
+    board: Mutex<Board>,
     log: Mutex<VecDeque<Logged>>,
     // All cameras share one Gemini quota, so calls are spaced globally (15/min on Flash Lite).
     next_gemini_call: Mutex<Instant>,
     gemini_gap: Duration,
-    critical_after: HashMap<String, Duration>, // copied into each new camera's tracker
+    kinds: Vec<String>, // hazard kinds from hazards.toml, offered on the worker report page
 }
 
+#[derive(Default)]
 struct Camera {
-    tracker: Tracker,
-    last_raw: Vec<Hazard>,  // Gemini's latest answer, reused while the scene is unchanged
-    last_frame: Bytes,      // the latest frame Gemini judged, shown on the dashboard
-    frame_version: u64,     // bumps with each new frame so the dashboard knows to reload it
+    last_raw: Vec<Hazard>, // Gemini's latest answer, reused while the scene is unchanged
+    last_frame: Bytes,     // the latest frame Gemini judged, shown on the dashboard
+    frame_version: u64,    // bumps with each new frame so the dashboard knows to reload it
     last_seen: Option<Instant>,
 }
 
 #[derive(Serialize, Clone)]
 struct Logged {
-    camera: String,
-    at_ms: u64, // unix time, so the browser can format it
+    source: String, // camera name, "worker: <name>", "dashboard", or "board" (fading/escalation)
+    at_ms: u64,     // unix time, so the browser can format it
     #[serde(flatten)]
     event: Event,
 }
@@ -62,20 +63,35 @@ impl CameraQuery {
     }
 }
 
+#[derive(Deserialize)]
+struct IdQuery {
+    id: u64,
+}
+
+// What the worker report page sends.
+#[derive(Deserialize)]
+struct Report {
+    name: String,
+    kind: String,
+    severity: Severity,
+    location: String,
+    note: String,
+}
+
 // What a camera page gets back after each frame/tick.
 #[derive(Serialize)]
 struct Analysis {
-    checked: bool,       // false = Gemini was skipped (unchanged scene or quota spacing)
-    raw: Vec<Hazard>,    // what Gemini saw in the latest frame (unconfirmed)
-    active: Vec<Active>, // confirmed hazards, most urgent first
-    events: Vec<Event>,  // what changed this tick: detected / critical / resolved
+    checked: bool,           // false = Gemini was skipped (unchanged scene or quota spacing)
+    raw: Vec<Hazard>,        // what Gemini saw in the latest frame (unconfirmed)
+    active: Vec<ThreatView>, // this camera's confirmed threats, most urgent first
 }
 
 // Everything the dashboard needs, in one poll.
 #[derive(Serialize)]
 struct Overview {
     cameras: Vec<CameraView>,
-    log: Vec<Logged>, // newest first
+    threats: Vec<ThreatView>, // the whole board, most urgent first
+    log: Vec<Logged>,         // newest first
 }
 
 #[derive(Serialize)]
@@ -84,7 +100,6 @@ struct CameraView {
     online: bool,
     frame_version: u64, // 0 = no frame yet
     raw: Vec<Hazard>,
-    active: Vec<Active>,
 }
 
 // `hackpsu`            start the server on port 3000
@@ -104,28 +119,43 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let rpm: u64 = std::env::var("GEMINI_RPM").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
-    let state_has_key = vision.has_server_key();
-    let state = AppState {
+    let has_server_key = vision.has_server_key();
+    let state = Arc::new(AppState {
         vision,
         cameras: Mutex::default(),
+        board: Mutex::new(Board::new(config.critical_after())),
         log: Mutex::default(),
         next_gemini_call: Mutex::new(Instant::now()),
         gemini_gap: Duration::from_millis(60_000 / rpm),
-        critical_after: config.critical_after(),
-    };
+        kinds: config.kinds(),
+    });
+
+    // The board decays and escalates every second, even when no camera is sending.
+    let ticker = state.clone();
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            every.tick().await;
+            let events = ticker.board.lock().unwrap().tick(Instant::now());
+            ticker.log_events("board", events);
+        }
+    });
 
     let app = Router::new()
         .route("/", get(|| async { Html(include_str!("../static/dashboard.html")) }))
         .route("/camera", get(|| async { Html(include_str!("../static/camera.html")) }))
+        .route("/report", get(|| async { Html(include_str!("../static/report.html")) }).post(report))
         .route("/analyze", post(analyze))
+        .route("/resolve", post(resolve))
         .route("/state", get(overview))
+        .route("/kinds", get(|State(s): State<Arc<AppState>>| async move { Json(s.kinds.clone()) }))
         .route("/frame", get(frame))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // phone photos can exceed axum's 2 MB default
-        .with_state(Arc::new(state));
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    println!("dashboard: http://localhost:3000   camera: http://localhost:3000/camera");
-    if !state_has_key {
+    println!("dashboard: http://localhost:3000   camera: /camera   worker report: /report");
+    if !has_server_key {
         println!("no server Gemini key: each camera must enter its own key on the camera page");
     }
     // Held until the server stops; dropping it kills cloudflared.
@@ -157,7 +187,7 @@ fn start_tunnel() -> anyhow::Result<tokio::process::Child> {
                 .split_whitespace()
                 .find(|w| w.starts_with("https://") && w.ends_with(".trycloudflare.com"));
             if let Some(url) = url {
-                println!("\npublic dashboard: {url}\npublic camera:    {url}/camera\n");
+                println!("\npublic dashboard: {url}\npublic camera:    {url}/camera\nworker report:    {url}/report\n");
                 print_qr(&format!("{url}/camera"));
             }
         }
@@ -174,8 +204,22 @@ fn print_qr(url: &str) {
     }
 }
 
+impl AppState {
+    fn log_events(&self, source: &str, events: Vec<Event>) {
+        if events.is_empty() {
+            return;
+        }
+        let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let mut log = self.log.lock().unwrap();
+        for event in events {
+            log.push_front(Logged { source: source.to_string(), at_ms, event });
+        }
+        log.truncate(LOG_LEN);
+    }
+}
+
 // A camera POSTs JPEG bytes (or an empty body for "scene unchanged").
-// Gemini judges the frame, that camera's tracker decides what to alert on.
+// Gemini judges the frame; each hazard it sees becomes a sighting on the board.
 async fn analyze(
     State(state): State<Arc<AppState>>,
     Query(q): Query<CameraQuery>,
@@ -212,57 +256,80 @@ async fn analyze(
     };
 
     let now = Instant::now();
-    let mut cameras = state.cameras.lock().unwrap();
-    let cam = cameras.entry(name.clone()).or_insert_with(|| Camera {
-        tracker: Tracker::new(state.critical_after.clone()),
-        last_raw: Vec::new(),
-        last_frame: Bytes::new(),
-        frame_version: 0,
-        last_seen: None,
-    });
-    cam.last_seen = Some(now);
-    let events = match report {
-        Some(report) => {
+    let raw = {
+        let mut cameras = state.cameras.lock().unwrap();
+        let cam = cameras.entry(name.clone()).or_default();
+        cam.last_seen = Some(now);
+        if let Some(report) = &report {
             cam.last_frame = jpeg;
             cam.frame_version += 1;
-            let events = cam.tracker.update(&report, now);
-            cam.last_raw = report.hazards;
-            events
+            cam.last_raw = report.hazards.clone();
         }
-        None => cam.tracker.tick(now),
+        cam.last_raw.clone()
     };
 
-    let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-    let mut log = state.log.lock().unwrap();
-    for event in &events {
-        log.push_front(Logged { camera: name.clone(), at_ms, event: event.clone() });
-    }
-    log.truncate(LOG_LEN);
+    let mut events = Vec::new();
+    let active = {
+        let mut board = state.board.lock().unwrap();
+        for hazard in report.map(|r| r.hazards).unwrap_or_default() {
+            events.extend(board.sight(Sighting { hazard, source: name.clone(), weight: CAMERA_WEIGHT }, now));
+        }
+        board.confirmed(now, Some(&name))
+    };
+    state.log_events(&name, events);
 
-    Ok(Json(Analysis {
-        checked: use_gemini,
-        active: cam.tracker.active(now),
-        raw: cam.last_raw.clone(),
-        events,
-    }))
+    Ok(Json(Analysis { checked: use_gemini, raw, active }))
+}
+
+// A worker reports a hazard by hand. It goes straight onto the board, already confirmed.
+async fn report(State(state): State<Arc<AppState>>, Json(r): Json<Report>) -> Result<StatusCode, (StatusCode, String)> {
+    if !state.kinds.contains(&r.kind) {
+        return Err((StatusCode::BAD_REQUEST, format!("unknown hazard kind: {}", r.kind)));
+    }
+    let name: String = r.name.trim().chars().take(40).collect();
+    let source = format!("worker: {}", if name.is_empty() { "anonymous" } else { &name });
+    let hazard = Hazard {
+        kind: r.kind,
+        severity: r.severity,
+        location: r.location.chars().take(200).collect(),
+        reason: r.note.chars().take(500).collect(),
+    };
+    let sighting = Sighting { hazard, source: source.clone(), weight: WORKER_WEIGHT };
+    let events = state.board.lock().unwrap().sight(sighting, Instant::now());
+    state.log_events(&source, events);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// A person marks a threat as dealt with.
+async fn resolve(State(state): State<Arc<AppState>>, Query(q): Query<IdQuery>) -> StatusCode {
+    let event = state.board.lock().unwrap().resolve(q.id);
+    match event {
+        Some(event) => {
+            state.log_events("dashboard", vec![event]);
+            StatusCode::NO_CONTENT
+        }
+        None => StatusCode::NOT_FOUND,
+    }
 }
 
 async fn overview(State(state): State<Arc<AppState>>) -> Json<Overview> {
     let now = Instant::now();
-    let cameras = state.cameras.lock().unwrap();
-    let mut views: Vec<CameraView> = cameras
+    let mut cameras: Vec<CameraView> = state
+        .cameras
+        .lock()
+        .unwrap()
         .iter()
         .map(|(name, cam)| CameraView {
             name: name.clone(),
             online: cam.last_seen.is_some_and(|t| now - t < OFFLINE_AFTER),
             frame_version: cam.frame_version,
             raw: cam.last_raw.clone(),
-            active: cam.tracker.active(now),
         })
         .collect();
-    views.sort_by(|a, b| a.name.cmp(&b.name));
+    cameras.sort_by(|a, b| a.name.cmp(&b.name));
+    let threats = state.board.lock().unwrap().confirmed(now, None);
     let log = state.log.lock().unwrap().iter().cloned().collect();
-    Json(Overview { cameras: views, log })
+    Json(Overview { cameras, threats, log })
 }
 
 async fn frame(State(state): State<Arc<AppState>>, Query(q): Query<CameraQuery>) -> impl IntoResponse {

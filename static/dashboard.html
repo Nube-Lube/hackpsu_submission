@@ -6,52 +6,59 @@
   <title>Hazard Watch</title>
   <style>
     body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
-    header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #222; }
+    header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #222; }
     header h1 { font-size: 20px; margin: 0; }
+    header nav { display: flex; gap: 16px; }
     a { color: #f0b429; }
-    main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px; }
-    #cameras { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-content: start; }
-    .tile { background: #1a1a1a; border-radius: 8px; overflow: hidden; border: 2px solid transparent; }
-    .tile.critical { border-color: #ff1f3d; }
-    .tile img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #000; display: block; }
-    .tile .info { padding: 10px; }
+    main { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; margin: 0 0 8px; }
+    #cameras { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-content: start; }
+    .tile { background: #1a1a1a; border-radius: 8px; overflow: hidden; }
+    .tile img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; display: block; }
+    .tile .info { padding: 10px; font-size: 14px; }
     .tile .name { font-weight: 700; }
-    .tile .online { font-size: 12px; color: #888; }
-    .hazard { padding: 8px; margin-top: 8px; border-radius: 6px; border-left: 6px solid; background: #222; font-size: 14px; }
+    .muted { color: #777; font-size: 12px; }
+    .threat { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; font-size: 14px; }
     .low { border-color: #e0c341; } .medium { border-color: #f08a24; } .high { border-color: #e5383b; }
-    .hazard.critical { border-color: #ff1f3d; background: #3a0d12; }
+    .threat.critical { border-color: #ff1f3d; background: #3a0d12; }
+    .threat.stale { opacity: .65; }
     .kind { font-weight: 600; text-transform: capitalize; }
-    .pending { font-size: 12px; color: #777; margin-top: 6px; }
+    .threat button { margin-top: 8px; padding: 6px 12px; border: 0; border-radius: 4px; background: #2e7d4f; color: #fff; font-weight: 600; cursor: pointer; }
     #banner { display: none; padding: 14px 16px; background: #c1121f; font-weight: 700; font-size: 20px; }
     #banner.on { display: block; animation: pulse 1s infinite alternate; }
     @keyframes pulse { to { background: #7a0a13; } }
-    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; margin: 0 0 8px; }
     #log div { font-size: 13px; color: #bbb; padding: 4px 0; border-bottom: 1px solid #1f1f1f; }
-    #empty { color: #888; }
-    @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+    section + section { margin-top: 20px; }
+    @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <div id="banner"></div>
   <header>
     <h1>Hazard Watch</h1>
-    <a href="/camera">Use this device as a camera</a>
+    <nav><a href="/report">Report a hazard</a><a href="/camera">Use this device as a camera</a></nav>
   </header>
   <main>
-    <section>
-      <div id="cameras"></div>
-      <p id="empty">No cameras yet. Open <a href="/camera">/camera</a> on a phone or laptop.</p>
-    </section>
-    <section>
-      <h2>Event log</h2>
-      <div id="log"></div>
-    </section>
+    <div>
+      <section>
+        <h2>Cameras</h2>
+        <div id="cameras"></div>
+        <p id="no-cameras" class="muted">No cameras yet. Open <a href="/camera">/camera</a> on a phone or laptop.</p>
+      </section>
+    </div>
+    <div>
+      <section>
+        <h2>Threat board</h2>
+        <div id="threats"></div>
+      </section>
+      <section>
+        <h2>Event log</h2>
+        <div id="log"></div>
+      </section>
+    </div>
   </main>
   <script>
-    const camerasEl = document.getElementById('cameras');
-    const empty = document.getElementById('empty');
-    const logEl = document.getElementById('log');
-    const banner = document.getElementById('banner');
+    const $ = id => document.getElementById(id);
     const label = kind => kind.replaceAll('_', ' ');
     const el = (tag, className, text) => {
       const e = document.createElement(tag);
@@ -60,72 +67,75 @@
       return e;
     };
 
-    const tiles = new Map(); // camera name -> { root, img, version }
-
-    function tileFor(name) {
-      if (!tiles.has(name)) {
+    // Camera tiles are kept between polls so images only reload when a new frame exists.
+    const tiles = new Map(); // camera name -> { img, info, version }
+    function renderCamera(cam) {
+      if (!tiles.has(cam.name)) {
         const root = el('div', 'tile');
         const img = el('img');
-        img.alt = name;
+        img.alt = cam.name;
         const info = el('div', 'info');
         root.append(img, info);
-        camerasEl.appendChild(root);
-        tiles.set(name, { root, img, info, version: 0 });
+        $('cameras').appendChild(root);
+        tiles.set(cam.name, { img, info, version: 0 });
       }
-      return tiles.get(name);
-    }
-
-    function renderCamera(cam) {
-      const tile = tileFor(cam.name);
-      // Only reload the image when the server has a newer frame.
+      const tile = tiles.get(cam.name);
       if (cam.frame_version !== tile.version) {
         tile.version = cam.frame_version;
         if (cam.frame_version) tile.img.src = `/frame?camera=${encodeURIComponent(cam.name)}&v=${cam.frame_version}`;
       }
-      tile.root.classList.toggle('critical', cam.active.some(h => h.critical));
-
+      const seeing = cam.raw.map(h => label(h.kind)).join(', ');
       tile.info.replaceChildren(
         el('div', 'name', cam.name),
-        el('div', 'online', cam.online ? '● live' : '○ offline'),
+        el('div', 'muted', `${cam.online ? '● live' : '○ offline'}${seeing ? ` · seeing: ${seeing}` : ''}`),
       );
-      if (!cam.active.length) tile.info.append(el('div', 'pending', 'No confirmed hazards'));
-      for (const h of cam.active) {
-        const card = el('div', `hazard ${h.critical ? 'critical' : h.severity}`);
-        card.append(
-          el('div', 'kind', `${label(h.kind)} · ${h.critical ? 'CRITICAL' : h.severity} · ${h.seconds}s`),
-          el('div', '', h.location),
-          el('div', '', h.reason),
-        );
-        tile.info.append(card);
-      }
-      const confirmed = new Set(cam.active.map(h => h.kind));
-      const unconfirmed = cam.raw.filter(h => !confirmed.has(h.kind)).map(h => label(h.kind));
-      if (unconfirmed.length) tile.info.append(el('div', 'pending', `Checking: ${unconfirmed.join(', ')}`));
     }
 
-    function render({ cameras, log }) {
-      empty.hidden = cameras.length > 0;
+    function renderThreat(t) {
+      const card = el('div', `threat ${t.critical ? 'critical' : t.severity}${t.stale ? ' stale' : ''}`);
+      const status = t.critical ? 'CRITICAL' : t.severity;
+      card.append(
+        el('div', 'kind', `${label(t.kind)} · ${status}`),
+        el('div', '', t.location),
+        el('div', '', t.reason),
+        el('div', 'muted', `${t.source} · ${t.seconds}s ago${t.stale ? ' · not seen recently' : ''}` +
+          (t.needs_person ? '' : ' · fades on its own')),
+      );
+      const button = el('button', '', 'Resolve');
+      button.onclick = async () => {
+        button.disabled = true;
+        await fetch(`/resolve?id=${t.id}`, { method: 'POST' });
+        poll();
+      };
+      card.append(button);
+      return card;
+    }
+
+    function render({ cameras, threats, log }) {
+      $('no-cameras').hidden = cameras.length > 0;
       cameras.forEach(renderCamera);
 
-      const critical = cameras.flatMap(c => c.active.filter(h => h.critical).map(h => `${c.name}: ${label(h.kind)}`));
-      banner.className = critical.length ? 'on' : '';
-      banner.textContent = critical.length ? `⚠ CRITICAL: ${critical.join(' · ').toUpperCase()}` : '';
+      $('threats').replaceChildren(...(threats.length ? threats.map(renderThreat) : [el('p', 'muted', 'No threats.')]));
 
-      logEl.replaceChildren(...log.map(e => el('div', '',
-        `${new Date(e.at_ms).toLocaleTimeString()}  ${e.camera}  ${e.event.toUpperCase()}  ${label(e.kind)}` +
-        (e.reason ? ` — ${e.reason}` : ''))));
+      const critical = threats.filter(t => t.critical).map(t => `${label(t.kind)} (${t.source})`);
+      $('banner').className = critical.length ? 'on' : '';
+      $('banner').textContent = critical.length ? `⚠ CRITICAL: ${critical.join(' · ').toUpperCase()}` : '';
+
+      $('log').replaceChildren(...log.map(e => {
+        const what = e.event === 'resolved' ? (e.by === 'faded' ? 'FADED' : 'RESOLVED') : e.event.toUpperCase();
+        return el('div', '', `${new Date(e.at_ms).toLocaleTimeString()}  ${e.source}  ${what}  ${label(e.kind)}` +
+          (e.reason ? ` — ${e.reason}` : ''));
+      }));
     }
 
     async function poll() {
-      while (true) {
-        try {
-          const res = await fetch('/state');
-          if (res.ok) render(await res.json());
-        } catch {}
-        await new Promise(r => setTimeout(r, 1000));
-      }
+      try {
+        const res = await fetch('/state');
+        if (res.ok) render(await res.json());
+      } catch {}
     }
     poll();
+    setInterval(poll, 1000);
   </script>
 </body>
 </html>

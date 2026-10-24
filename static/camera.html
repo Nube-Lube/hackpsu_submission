@@ -7,7 +7,11 @@
   <style>
     body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
     main { max-width: 720px; margin: 0 auto; padding: 16px; }
-    video { width: 100%; border-radius: 8px; background: #000; }
+    #viewer { position: relative; }
+    video { width: 100%; border-radius: 8px; background: #000; display: block; }
+    #rotate { display: none; position: absolute; inset: 0; border-radius: 8px; background: rgba(0, 0, 0, .8);
+              align-items: center; justify-content: center; text-align: center; font-size: 20px; font-weight: 700; padding: 16px; }
+    #rotate.on { display: flex; }
     #setup { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
     #setup input { flex: 1 1 200px; padding: 10px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #1c1c1c; color: #eee; }
     #setup button { padding: 10px 16px; font-size: 16px; border-radius: 6px; border: 0; background: #f0b429; color: #111; font-weight: 700; }
@@ -26,7 +30,10 @@
       <input id="key" type="password" placeholder="Your Gemini API key (optional)" autocomplete="off">
       <button>Start</button>
     </form>
-    <video id="cam" autoplay playsinline muted></video>
+    <div id="viewer">
+      <video id="cam" autoplay playsinline muted></video>
+      <div id="rotate">↻ Turn the phone sideways<br>Frames are paused until it's in landscape</div>
+    </div>
     <div id="status">Name this camera and press Start. <a href="/">Open dashboard</a></div>
     <div id="hazards"></div>
   </main>
@@ -39,6 +46,7 @@
     const setup = document.getElementById('setup');
     const nameInput = document.getElementById('name');
     const keyInput = document.getElementById('key');
+    const rotate = document.getElementById('rotate');
     const label = kind => kind.replaceAll('_', ' ');
 
     // Remember the name per device; ?name=... in the URL overrides it.
@@ -47,9 +55,9 @@
     try { keyInput.value = localStorage.getItem('geminiKey') || ''; } catch {}
     let cameraName = '', geminiKey = '';
 
-    // Grab the current video frame as JPEG bytes, at most 1024 px wide (phones shoot 4K).
+    // Grab the current video frame as JPEG bytes, longest side at most 1024 px (phones shoot 4K).
     function snapshot() {
-      const scale = Math.min(1, 1024 / video.videoWidth);
+      const scale = Math.min(1, 1024 / Math.max(video.videoWidth, video.videoHeight));
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
       canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -103,10 +111,14 @@
     // is false and we simply offer again next second.
     async function loop() {
       while (true) {
+        // Only landscape frames are sent, so every feed looks the same on the dashboard.
+        // While the phone is upright we still send empty ticks, so the camera stays online.
+        const portrait = video.videoHeight > video.videoWidth;
+        rotate.classList.toggle('on', portrait);
         const thumb = thumbnail();
         const since = performance.now() - lastSent;
         const changed = !lastThumb || difference(thumb, lastThumb) > CHANGE_THRESHOLD;
-        const wantGemini = since >= MIN_GAP_MS && (changed || pendingHazards || since >= HEARTBEAT_MS);
+        const wantGemini = !portrait && since >= MIN_GAP_MS && (changed || pendingHazards || since >= HEARTBEAT_MS);
         try {
           const res = await fetch(`/analyze?camera=${encodeURIComponent(cameraName)}`, {
             method: 'POST',
@@ -121,7 +133,8 @@
           if (analysis.checked) {
             lastThumb = thumb; lastSent = performance.now(); geminiCalls++;
           }
-          const what = analysis.checked ? 'checked with Gemini' : wantGemini ? 'waiting for a Gemini slot' : 'scene unchanged';
+          const what = portrait ? 'paused: turn sideways' : analysis.checked ? 'checked with Gemini'
+            : wantGemini ? 'waiting for a Gemini slot' : 'scene unchanged';
           status.textContent = `${cameraName} · ${what} · ${geminiCalls} Gemini calls (${geminiKey ? 'your key' : 'shared key'})`;
         } catch (e) {
           if (wantGemini) lastSent = performance.now(); // don't hammer the API after an error
@@ -138,7 +151,10 @@
       geminiKey = keyInput.value.trim();
       try { localStorage.setItem('cameraName', cameraName); localStorage.setItem('geminiKey', geminiKey); } catch {}
       try {
-        video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        // Ask for 720p so cheap webcams don't fall back to 640x480; the browser picks the closest it has.
+        video.srcObject = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
         setup.hidden = true;
         video.onloadeddata = loop;
       } catch (err) {

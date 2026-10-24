@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Report a Hazard</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
+    main { max-width: 520px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 22px; }
+    label { display: block; margin: 14px 0 6px; font-size: 14px; color: #aaa; }
+    input, select, textarea { width: 100%; box-sizing: border-box; padding: 12px; font-size: 16px; border-radius: 6px;
+                              border: 1px solid #444; background: #1c1c1c; color: #eee; font-family: inherit; }
+    textarea { min-height: 90px; }
+    button { width: 100%; margin-top: 20px; padding: 14px; font-size: 18px; font-weight: 700; border: 0; border-radius: 6px;
+             background: #f0b429; color: #111; }
+    button:disabled { opacity: .5; }
+    #result { margin-top: 14px; font-weight: 600; }
+    .ok { color: #6fd08c; } .err { color: #ff6b6b; }
+    a { color: #f0b429; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Report a hazard</h1>
+    <form id="form">
+      <label for="name">Your name</label>
+      <input id="name" maxlength="40" placeholder="Optional">
+      <label for="kind">What is it?</label>
+      <select id="kind" required></select>
+      <label for="severity">How serious?</label>
+      <select id="severity">
+        <option value="low">Low: worth knowing</option>
+        <option value="medium" selected>Medium: needs fixing</option>
+        <option value="high">High: someone could get hurt now</option>
+      </select>
+      <label for="location">Where?</label>
+      <input id="location" maxlength="200" placeholder="e.g. bay 3, by the loading door" required>
+      <label for="note">Details</label>
+      <textarea id="note" maxlength="500" placeholder="What did you see?"></textarea>
+      <button id="send">Send report</button>
+    </form>
+    <div id="result"></div>
+    <p><a href="/">Open dashboard</a></p>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const label = kind => kind.replaceAll('_', ' ');
+
+    try { $('name').value = localStorage.getItem('workerName') || ''; } catch {}
+
+    // Hazard kinds come from the server's hazards.toml.
+    fetch('/kinds').then(r => r.json()).then(kinds => {
+      for (const k of kinds) {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.textContent = label(k);
+        $('kind').appendChild(opt);
+      }
+    });
+
+    $('form').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('send').disabled = true;
+      try { localStorage.setItem('workerName', $('name').value.trim()); } catch {}
+      try {
+        const res = await fetch('/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: $('name').value, kind: $('kind').value, severity: $('severity').value,
+            location: $('location').value, note: $('note').value,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        $('result').className = 'ok';
+        $('result').textContent = 'Reported. It is on the dashboard now.';
+        $('location').value = '';
+        $('note').value = '';
+      } catch (err) {
+        $('result').className = 'err';
+        $('result').textContent = `Could not send: ${err.message}`;
+      }
+      $('send').disabled = false;
+    });
+  </script>
+</body>
+</html>
