@@ -30,6 +30,7 @@
     .dot.low { background: #e0c341; } .dot.medium { background: #f08a24; } .dot.high { background: #e5383b; }
     .dot.critical { background: #ff1f3d; animation: ping 1s infinite; }
     @keyframes ping { 50% { box-shadow: 0 0 0 10px rgba(255, 31, 61, .25); } }
+    .worker { padding: 2px 6px; border-radius: 10px; background: #1d3557; border: 1px solid #457b9d; font-size: 12px; white-space: nowrap; }
     #tray { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; min-height: 26px; }
     #tray .cam { position: static; }
 
@@ -56,7 +57,7 @@
   <div id="banner"></div>
   <header>
     <h1>Hazard Watch</h1>
-    <nav><a href="/report">Report a hazard</a><a href="/camera">Use this device as a camera</a></nav>
+    <nav><a href="/worker">Worker app</a><a href="/report">Report a hazard</a><a href="/camera">Use this device as a camera</a></nav>
   </header>
   <main>
     <div>
@@ -128,7 +129,7 @@
       });
     }
 
-    function renderMap(cameras, threats) {
+    function renderMap(cameras, threats, workers) {
       if (dragging) return; // don't rebuild the chip that's being dragged
       const markers = [], tray = [];
       for (const cam of cameras) {
@@ -161,6 +162,11 @@
           line.setAttribute('vector-effect', 'non-scaling-stroke');
           lines.push(line);
         }
+      }
+      for (const w of workers) {
+        const chip = el('div', 'marker worker', `👷 ${w.name}`);
+        place(chip, w.pos);
+        markers.push(chip);
       }
       $('markers').replaceChildren(...markers);
       $('trails').replaceChildren(...lines);
@@ -211,8 +217,8 @@
       return card;
     }
 
-    function render({ cameras, threats, log }) {
-      renderMap(cameras, threats);
+    function render({ cameras, threats, workers, log }) {
+      renderMap(cameras, threats, workers);
       $('no-cameras').hidden = cameras.length > 0;
       cameras.forEach(renderCamera);
 

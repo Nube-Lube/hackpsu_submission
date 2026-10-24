@@ -23,12 +23,14 @@ use vision::Vision;
 
 const LOG_LEN: usize = 50; // events kept for the dashboard
 const OFFLINE_AFTER: Duration = Duration::from_secs(10);
+const WORKER_GONE_AFTER: Duration = Duration::from_secs(30); // worker page re-sends every 10 s
 const POSITIONS_FILE: &str = "positions.json"; // where cameras sit on the map, kept across restarts
 
 struct AppState {
     vision: Vision,
     cameras: Mutex<HashMap<String, Camera>>,
     positions: Mutex<HashMap<String, Pos>>, // camera name -> spot on the floor-plan map
+    workers: Mutex<HashMap<String, (Pos, Instant)>>, // worker name -> where they said they are, when
     board: Mutex<Board>,
     log: Mutex<VecDeque<Logged>>,
     // All cameras share one Gemini quota, so calls are spaced globally (15/min on Flash Lite).
@@ -70,6 +72,19 @@ struct IdQuery {
     id: u64,
 }
 
+// The worker page saying "I'm here".
+#[derive(Deserialize)]
+struct CheckIn {
+    name: String,
+    pos: Pos,
+}
+
+#[derive(Serialize)]
+struct WorkerView {
+    name: String,
+    pos: Pos,
+}
+
 #[derive(Deserialize)]
 struct PlaceQuery {
     camera: String,
@@ -101,6 +116,7 @@ struct Analysis {
 struct Overview {
     cameras: Vec<CameraView>,
     threats: Vec<ThreatView>, // the whole board, most urgent first
+    workers: Vec<WorkerView>, // workers who checked in recently
     log: Vec<Logged>,         // newest first
 }
 
@@ -135,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
         vision,
         cameras: Mutex::default(),
         positions: Mutex::new(load_positions()),
+        workers: Mutex::default(),
         board: Mutex::new(Board::new(config.critical_after())),
         log: Mutex::default(),
         next_gemini_call: Mutex::new(Instant::now()),
@@ -156,6 +173,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(|| async { Html(include_str!("../static/dashboard.html")) }))
         .route("/camera", get(|| async { Html(include_str!("../static/camera.html")) }))
+        .route("/worker", get(|| async { Html(include_str!("../static/worker.html")) }))
+        .route("/checkin", post(checkin))
         .route("/report", get(|| async { Html(include_str!("../static/report.html")) }).post(report))
         .route("/analyze", post(analyze))
         .route("/resolve", post(resolve))
@@ -168,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    println!("dashboard: http://localhost:3000   camera: /camera   worker report: /report");
+    println!("dashboard: http://localhost:3000   camera: /camera   worker: /worker");
     if !has_server_key {
         println!("no server Gemini key: each camera must enter its own key on the camera page");
     }
@@ -201,7 +220,7 @@ fn start_tunnel() -> anyhow::Result<tokio::process::Child> {
                 .split_whitespace()
                 .find(|w| w.starts_with("https://") && w.ends_with(".trycloudflare.com"));
             if let Some(url) = url {
-                println!("\npublic dashboard: {url}\npublic camera:    {url}/camera\nworker report:    {url}/report\n");
+                println!("\npublic dashboard: {url}\npublic camera:    {url}/camera\nworker app:       {url}/worker\n");
                 print_qr(&format!("{url}/camera"));
             }
         }
@@ -340,6 +359,16 @@ async fn resolve(State(state): State<Arc<AppState>>, Query(q): Query<IdQuery>) -
     }
 }
 
+// A worker taps "I'm here" on the map (and the page repeats it while open).
+async fn checkin(State(state): State<Arc<AppState>>, Json(c): Json<CheckIn>) -> StatusCode {
+    let name: String = c.name.trim().chars().take(40).collect();
+    if name.is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+    state.workers.lock().unwrap().insert(name, (clamp(c.pos), Instant::now()));
+    StatusCode::NO_CONTENT
+}
+
 // The dashboard drags a camera onto the map.
 async fn place(State(state): State<Arc<AppState>>, Query(q): Query<PlaceQuery>) -> StatusCode {
     let mut positions = state.positions.lock().unwrap();
@@ -378,8 +407,16 @@ async fn overview(State(state): State<Arc<AppState>>) -> Json<Overview> {
         .collect();
     cameras.sort_by(|a, b| a.name.cmp(&b.name));
     let threats = state.board.lock().unwrap().confirmed(now, None);
+    let workers = {
+        let mut workers = state.workers.lock().unwrap();
+        workers.retain(|_, (_, seen)| now - *seen < WORKER_GONE_AFTER);
+        let mut list: Vec<WorkerView> =
+            workers.iter().map(|(name, (pos, _))| WorkerView { name: name.clone(), pos: *pos }).collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        list
+    };
     let log = state.log.lock().unwrap().iter().cloned().collect();
-    Json(Overview { cameras, threats, log })
+    Json(Overview { cameras, threats, workers, log })
 }
 
 async fn frame(State(state): State<Arc<AppState>>, Query(q): Query<CameraQuery>) -> impl IntoResponse {

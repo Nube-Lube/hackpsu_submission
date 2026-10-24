@@ -60,16 +60,22 @@
 
     // Map position as fractions (0..1) of the map, same as the dashboard.
     let pos = null;
+    function setPin(p) {
+      pos = p;
+      $('pin').style.left = `${pos.x * 100}%`;
+      $('pin').style.top = `${pos.y * 100}%`;
+      $('pin').style.display = 'block';
+    }
+    // The worker app links here with ?x=..&y=.. so the pin starts where the worker is.
+    const params = new URLSearchParams(location.search);
+    if (params.has('x') && params.has('y')) setPin({ x: +params.get('x'), y: +params.get('y') });
     $('plan').onload = () => {
       $('map').style.aspectRatio = `${$('plan').naturalWidth} / ${$('plan').naturalHeight}`;
       $('plan').style.display = 'block';
     };
     $('map').addEventListener('click', e => {
       const r = $('map').getBoundingClientRect();
-      pos = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
-      $('pin').style.left = `${pos.x * 100}%`;
-      $('pin').style.top = `${pos.y * 100}%`;
-      $('pin').style.display = 'block';
+      setPin({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
     });
 
     // Hazard kinds come from the server's hazards.toml.
