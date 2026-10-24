@@ -1,0 +1,123 @@
+use anyhow::{Context, Result};
+use base64::Engine;
+use serde::Deserialize;
+use serde_json::json;
+
+const PROMPT: &str = "You are a workplace safety inspector looking at one frame from a \
+construction/warehouse camera. List every slip, trip, or fall hazard you can see: \
+a person lying on the ground, spills or wet floors, cables or clutter in walkways, \
+workers missing hard hats or high-visibility vests, and unprotected edges or open holes. \
+Only report what is clearly visible. If nothing is hazardous, return an empty list.";
+
+// What we want back. Gemini is forced to match this via `responseSchema`.
+#[derive(Debug, Deserialize)]
+pub struct Report {
+    pub hazards: Vec<Hazard>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Hazard {
+    pub kind: HazardKind,
+    pub severity: Severity,
+    pub location: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum HazardKind {
+    PersonDown,
+    Spill,
+    TripHazard,
+    MissingPpe,
+    UnprotectedEdge,
+    Other,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Low,
+    Medium,
+    High,
+}
+
+pub struct Gemini {
+    http: reqwest::Client,
+    api_key: String,
+    model: String,
+}
+
+impl Gemini {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            http: reqwest::Client::new(),
+            api_key: std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY not set")?,
+            model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.6-flash".into()),
+        })
+    }
+
+    pub async fn analyze(&self, jpeg: &[u8]) -> Result<Report> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            self.model
+        );
+        let body = json!({
+            "contents": [{
+                "parts": [
+                    { "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": base64::engine::general_purpose::STANDARD.encode(jpeg),
+                    }},
+                    { "text": PROMPT },
+                ]
+            }],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": schema(),
+            }
+        });
+
+        let resp: serde_json::Value = self
+            .http
+            .post(url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        // The JSON we asked for arrives as a string inside the first candidate.
+        let text = resp["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str()
+            .with_context(|| format!("unexpected Gemini response: {resp}"))?;
+        Ok(serde_json::from_str(text)?)
+    }
+}
+
+fn schema() -> serde_json::Value {
+    json!({
+        "type": "OBJECT",
+        "properties": {
+            "hazards": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "kind": { "type": "STRING", "enum": [
+                            "person_down", "spill", "trip_hazard",
+                            "missing_ppe", "unprotected_edge", "other"
+                        ]},
+                        "severity": { "type": "STRING", "enum": ["low", "medium", "high"] },
+                        "location": { "type": "STRING" },
+                        "reason": { "type": "STRING" },
+                    },
+                    "required": ["kind", "severity", "location", "reason"],
+                }
+            }
+        },
+        "required": ["hazards"],
+    })
+}
