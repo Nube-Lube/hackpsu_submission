@@ -3,113 +3,177 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#111111">
-  <title>Hazard Watch Worker</title>
+  <meta name="theme-color" content="#f4f1e8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <title>OverSite Worker</title>
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; overflow: hidden; overscroll-behavior: none; }
-    .muted { color: #777; font-size: 13px; }
-    h1.w { font-size: 20px; margin: 2px 0 12px; }
-    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; margin: 18px 0 8px; }
+    :root {
+      --ivory: #f4f1e8;
+      --ink: #1d2a25;
+      --ink-soft: #5d6d66;
+      --jade: #149d78;
+      --jade-deep: #0b7d5e;
+      --jade-ink: #0a6b51;
+      --glass: rgba(255, 255, 255, .55);
+      --glass-strong: rgba(255, 255, 255, .75);
+      --line: rgba(29, 42, 37, .12);
+      --shadow: 0 8px 30px rgba(21, 64, 48, .12);
+    }
+    body { margin: 0; font-family: "Plus Jakarta Sans", -apple-system, "SF Pro Text", system-ui, sans-serif;
+           color: var(--ink); background: var(--ivory); overflow: hidden; overscroll-behavior: none; }
+    /* Liquid-glass backdrop: soft jade and ivory light that the glass panels blur. */
+    body::before { content: ""; position: fixed; inset: 0; z-index: -1;
+      background:
+        radial-gradient(42% 50% at 12% 16%, rgba(20, 157, 120, .17), transparent 70%),
+        radial-gradient(45% 45% at 88% 10%, rgba(122, 196, 165, .20), transparent 70%),
+        radial-gradient(50% 50% at 82% 86%, rgba(20, 157, 120, .13), transparent 70%),
+        radial-gradient(38% 42% at 14% 90%, rgba(224, 190, 116, .16), transparent 70%),
+        var(--ivory);
+    }
+    .muted { color: var(--ink-soft); font-size: 13px; }
+    #status { text-align: center; font-size: 17px; font-weight: 700; }
+    h1.w { font-size: 44px; font-weight: 800; margin: 6px 0 16px; letter-spacing: -.02em; text-align: center; }
+    h2 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); margin: 26px 0 12px; text-align: center; }
+    a { color: var(--jade-ink); }
 
     /* Two full-height screens stacked in a deck. Sliding the deck up by half its
        height brings the report screen into view; the body can't scroll there. */
     #viewport { height: 100vh; height: 100dvh; overflow: hidden; }
     #deck { height: 200vh; height: 200dvh; transition: transform .5s cubic-bezier(.25, .9, .3, 1); }
     #deck.report { transform: translateY(-50%); }
-    .screen { height: 50%; display: flex; flex-direction: column; }
-    .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+    .screen { height: 50%; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Scrollable flex items must be allowed to shrink below their content,
+       otherwise they grow and clip instead of scrolling (the mobile scroll bug). */
+    .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+
+    /* Dashboard and account panels sit side by side; the track slides between them. */
+    #panels { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; width: 200%;
+              transition: transform .4s cubic-bezier(.25, .9, .3, 1); }
+    #panels.account { transform: translateX(-50%); }
+    .panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 16px 28px; }
 
     /* Bottom tabs: dashboard on the left, account on the right. */
-    .tabbar { display: flex; border-top: 1px solid #242424; background: #161616; padding-bottom: env(safe-area-inset-bottom); }
-    .tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0 11px;
-           border: 0; background: none; color: #777; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .tabbar { display: flex; border-top: 1px solid rgba(255, 255, 255, .65); background: rgba(255, 255, 255, .62);
+              backdrop-filter: blur(22px) saturate(170%); -webkit-backdrop-filter: blur(22px) saturate(170%);
+              box-shadow: 0 -6px 24px rgba(21, 64, 48, .08); padding-bottom: env(safe-area-inset-bottom); }
+    .tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0 11px; margin: 6px 10px 4px;
+           border: 0; background: none; color: var(--ink-soft); font-family: inherit; font-size: 11px; font-weight: 650;
+           cursor: pointer; border-radius: 12px; }
     .tab svg { width: 22px; height: 22px; }
-    .tab.on { color: #f0b429; }
+    .tab.on { color: var(--jade-ink); background: rgba(20, 157, 120, .14); box-shadow: inset 0 0 0 1px rgba(20, 157, 120, .18); }
 
-    #alert { display: none; padding: 14px; margin-bottom: 12px; border-radius: 6px; background: #c1121f; font-weight: 700; font-size: 18px; }
+    #alert { display: none; padding: 14px; margin-bottom: 12px; border-radius: 14px; color: #fff; font-weight: 700; font-size: 17px;
+             background: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 45%), rgba(219, 45, 57, .92);
+             border: 1px solid rgba(255, 255, 255, .4); box-shadow: var(--shadow);
+             backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
     #alert.on { display: block; animation: pulse 1s infinite alternate; }
-    @keyframes pulse { to { background: #7a0a13; } }
+    @keyframes pulse { to { background-color: rgba(154, 18, 30, .92); } }
 
     /* Maps: positions are fractions (0..1) of width and height. */
-    .map { position: relative; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; cursor: crosshair;
-           background-color: #161616;
-           background-image: linear-gradient(#262626 1px, transparent 1px), linear-gradient(90deg, #262626 1px, transparent 1px);
-           background-size: 10% 10%; }
+    .map { position: relative; aspect-ratio: 16 / 10; border-radius: 18px; overflow: hidden; cursor: crosshair;
+           background-color: rgba(255, 255, 255, .45);
+           background-image: linear-gradient(rgba(20, 157, 120, .10) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 157, 120, .10) 1px, transparent 1px);
+           background-size: 10% 10%;
+           border: 1px solid rgba(255, 255, 255, .7); box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .8);
+           backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
     .map .plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
     .marker { position: absolute; transform: translate(-50%, -50%); }
-    .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #111; }
-    .dot.low { background: #e0c341; } .dot.medium { background: #f08a24; } .dot.high { background: #e5383b; }
-    .dot.critical { background: #ff1f3d; }
-    #me { display: none; width: 18px; height: 18px; border-radius: 50%; background: #4ea8de; border: 3px solid #fff; }
-    #range { display: none; border: 2px dashed rgba(78, 168, 222, .5); border-radius: 50%; pointer-events: none; }
-    #rpin { position: absolute; display: none; width: 18px; height: 18px; border-radius: 50%; background: #f0b429;
-            border: 2px solid #111; transform: translate(-50%, -50%); }
+    .dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
+    .dot.low { background: #d9a40f; } .dot.medium { background: #e0812a; } .dot.high { background: #d93a42; }
+    .dot.critical { background: #e11d48; animation: ping 1s infinite; }
+    @keyframes ping { 50% { box-shadow: 0 0 0 8px rgba(225, 29, 72, .25); } }
+    #me { display: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 4px solid var(--jade);
+          box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
+    #range { display: none; border: 2px dashed rgba(20, 157, 120, .55); border-radius: 50%; pointer-events: none; }
+    #rpin { position: absolute; display: none; width: 20px; height: 20px; border-radius: 50%; background: var(--jade);
+            border: 2px solid #fff; transform: translate(-50%, -50%); box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
 
-    .big { width: 100%; padding: 14px; font-size: 17px; font-weight: 700; border: 0; border-radius: 8px;
-           background: #f0b429; color: #111; cursor: pointer; font-family: inherit; }
+    .big { width: 100%; padding: 14px; font-size: 17px; font-weight: 650; border: 1px solid rgba(255, 255, 255, .5);
+           border-radius: 14px; cursor: pointer; font-family: inherit; color: #fff;
+           background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
+           box-shadow: 0 8px 22px rgba(20, 157, 120, .38), inset 0 1px 0 rgba(255, 255, 255, .45); }
+    .big:active { transform: translateY(1px); }
     .big:disabled { opacity: .5; }
-    #openReport { margin-top: 14px; }
+    #openReport { margin-top: 14px; font-size: 23px; padding: 16px 24px; }
     #acct .big { margin-top: 20px; }
 
-    label { display: block; margin: 14px 0 6px; font-size: 14px; color: #aaa; }
-    input, select, textarea { width: 100%; padding: 12px; font-size: 16px; border-radius: 6px;
-                              border: 1px solid #444; background: #1c1c1c; color: #eee; font-family: inherit; }
+    label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+    input, select, textarea { width: 100%; padding: 12px 14px; font-size: 16px; border-radius: 12px;
+                              border: 1px solid var(--line); background: var(--glass); color: var(--ink); font-family: inherit;
+                              backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+                              box-shadow: inset 0 1px 2px rgba(29, 42, 37, .05); }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--jade); box-shadow: 0 0 0 3px rgba(20, 157, 120, .18); }
     textarea { min-height: 84px; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     #send { margin-top: 20px; }
-    #err { color: #ff6b6b; font-size: 14px; margin-top: 10px; }
+    #err { color: #c01037; font-size: 14px; margin-top: 10px; }
 
-    .rhead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-    .rhead h1 { font-size: 20px; margin: 0; flex: 1; }
-    #back { border: 0; background: none; color: #f0b429; font-size: 26px; line-height: 1; cursor: pointer; padding: 4px 10px; }
+    /* Sheet-style header: round back button top-left, big title centered below it. */
+    .rhead { display: flow-root; position: relative; margin: 4px 0 0; text-align: center; }
+    .rhead h1 { font-size: 44px; font-weight: 800; margin: 70px 0 14px; letter-spacing: -.02em; text-wrap: balance; }
+    #back { position: absolute; left: 0; top: 6px; width: 60px; height: 60px; border-radius: 50%;
+            border: 1px solid rgba(20, 157, 120, .25); background: rgba(20, 157, 120, .14); color: var(--jade-ink);
+            font-size: 38px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 4px 12px rgba(21, 64, 48, .10); }
+    #back:active { transform: scale(.92); }
 
-    /* Recent detections feed. */
-    .notif { display: flex; gap: 10px; align-items: flex-start; padding: 10px 2px; border-bottom: 1px solid #1f1f1f; }
-    .notif .nd { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: #e0c341; }
-    .notif.crit .nd { background: #ff1f3d; animation: ping 1s infinite; }
-    @keyframes ping { 50% { box-shadow: 0 0 0 6px rgba(255, 31, 61, .2); } }
-    .notif .nk { font-size: 14px; font-weight: 600; }
-    .notif .nk .tag { color: #ff5c6e; font-size: 11px; font-weight: 700; letter-spacing: .04em; margin-left: 6px; }
-    .notif .nm { color: #888; font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Recent detections feed (last 10). */
+    .notif { display: flex; gap: 10px; align-items: flex-start; padding: 11px 14px; border-radius: 14px; margin-bottom: 8px;
+             background: var(--glass); border: 1px solid rgba(255, 255, 255, .65);
+             backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+             box-shadow: 0 4px 16px rgba(21, 64, 48, .07); }
+    .notif .nd { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: #d9a40f; }
+    .notif.crit .nd { background: #e11d48; animation: ping 1s infinite; }
+    .notif .nk { font-size: 14px; font-weight: 650; }
+    .notif .nk .tag { color: #c01037; font-size: 11px; font-weight: 800; letter-spacing: .04em; margin-left: 6px; }
+    .notif .nm { color: var(--ink-soft); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     /* Success popup: slides in from the bottom with a bounce (overshooting bezier),
        drops back down with a plain ease. The checkmark's tail pokes out of the circle. */
-    #popup { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 140%);
-             transition: transform .35s ease-in; background: #1c1c1c; border: 1px solid #2e2e2e; border-radius: 14px;
-             padding: 18px 30px 16px; text-align: center; box-shadow: 0 12px 40px rgba(0, 0, 0, .6); z-index: 10; cursor: pointer; }
+    #popup { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 140%);
+             transition: transform .35s ease-in;
+             background: var(--glass-strong); backdrop-filter: blur(24px) saturate(170%); -webkit-backdrop-filter: blur(24px) saturate(170%);
+             border: 1px solid rgba(255, 255, 255, .8); border-radius: 22px; padding: 18px 30px 16px; text-align: center;
+             box-shadow: 0 18px 50px rgba(21, 64, 48, .22), inset 0 1px 0 rgba(255, 255, 255, .9); z-index: 10; cursor: pointer;
+             max-width: calc(100vw - 32px); }
     #popup.on { transform: translate(-50%, 0); transition: transform .55s cubic-bezier(.34, 1.56, .64, 1); }
-    #popup h3 { margin: 0; font-size: 18px; }
+    #popup h3 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
     #popup svg { display: block; margin: 10px auto 12px; }
-    #popup p { margin: 0; color: #9a9a9a; font-size: 13px; }
+    #popup p { margin: 0; color: var(--ink-soft); font-size: 13px; }
   </style>
 </head>
 <body>
   <div id="viewport">
     <div id="deck">
       <section class="screen">
-        <div class="scroll" id="dashPanel">
-          <h1 class="w">Hazard Watch</h1>
-          <div id="alert"></div>
-          <p id="status" class="muted"></p>
-          <div id="map" class="map">
-            <img id="plan" class="plan" src="/floorplan" alt="">
-            <div id="range" class="marker"></div>
-            <div id="markers"></div>
-            <div id="me" class="marker"></div>
+        <div id="panels">
+          <div class="panel" id="dashPanel">
+            <h1 class="w">OverSite</h1>
+            <div id="alert"></div>
+            <p id="status" class="muted"></p>
+            <div id="map" class="map">
+              <img id="plan" class="plan" src="/floorplan" alt="">
+              <div id="range" class="marker"></div>
+              <div id="markers"></div>
+              <div id="me" class="marker"></div>
+            </div>
+            <button id="openReport" class="big">Report a hazard</button>
+            <h2>Recent notifications</h2>
+            <div id="notes"></div>
           </div>
-          <button id="openReport" class="big">Report a hazard</button>
-          <h2>Recent notifications</h2>
-          <div id="notes"></div>
-        </div>
-        <div class="scroll" id="accountPanel" hidden>
-          <h1 class="w">Account</h1>
-          <form id="acct">
-            <label for="name">Your name</label>
-            <input id="name" maxlength="40" placeholder="e.g. Jordan" autocomplete="name">
-            <button class="big">Save</button>
-          </form>
-          <p id="nameMsg" class="muted" style="margin-top: 14px">Shown on the dashboard when you check in.</p>
+          <div class="panel" id="accountPanel">
+            <h1 class="w">Account</h1>
+            <form id="acct">
+              <label for="name">Your name</label>
+              <input id="name" maxlength="40" placeholder="e.g. Jordan" autocomplete="name">
+              <button class="big">Save</button>
+            </form>
+            <p id="nameMsg" class="muted" style="margin-top: 14px">Shown on the dashboard when you check in.</p>
+          </div>
         </div>
         <nav class="tabbar">
           <button class="tab on" id="tabDash" type="button">
@@ -138,7 +202,7 @@
                 <select id="kind" required></select>
               </div>
               <div>
-                <label for="severity">How serious?</label>
+                <label for="severity">Severity?</label>
                 <select id="severity">
                   <option value="low">Low</option>
                   <option value="medium" selected>Medium</option>
@@ -166,8 +230,8 @@
   <div id="popup" role="status">
     <h3>Report submitted!</h3>
     <svg width="64" height="56" viewBox="0 0 56 48" fill="none">
-      <circle cx="22" cy="27" r="15" stroke="#6fd08c" stroke-width="3"/>
-      <path d="M13 26 L20 33 L42 14" stroke="#6fd08c" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="22" cy="27" r="15" stroke="#149d78" stroke-width="3"/>
+      <path d="M13 26 L20 33 L42 14" stroke="#149d78" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     <p>Thanks for keeping the worksite safe.</p>
   </div>
@@ -204,12 +268,11 @@
     }
     statusUpdate();
 
-    // Tabs
+    // Tabs slide the panel track sideways.
     function showTab(which) {
       $('tabDash').classList.toggle('on', which === 'dash');
       $('tabAccount').classList.toggle('on', which === 'account');
-      $('dashPanel').hidden = which !== 'dash';
-      $('accountPanel').hidden = which !== 'account';
+      $('panels').classList.toggle('account', which === 'account');
     }
     $('tabDash').onclick = () => showTab('dash');
     $('tabAccount').onclick = () => showTab('account');
@@ -262,7 +325,7 @@
         osc.start();
         osc.stop(audio.currentTime + 0.4);
       }
-      try { if (Notification.permission === 'granted') new Notification('Hazard Watch', { body: text }); } catch {}
+      try { if (Notification.permission === 'granted') new Notification('OverSite', { body: text }); } catch {}
     }
 
     const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -287,7 +350,7 @@
       }
       if (!near.length) $('alert').className = ''; // banner stays up while anything is near you
 
-      // Recent detections feed from the shared event log.
+      // Last 10 detections from the shared event log (newest first).
       const rows = (log || []).filter(e => e.event === 'detected' || e.event === 'critical').slice(0, 10);
       $('notes').replaceChildren(...(rows.length ? rows.map(e => {
         const row = el('div', `notif${e.event === 'critical' ? ' crit' : ''}`);

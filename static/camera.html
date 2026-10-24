@@ -3,24 +3,58 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hazard Watch Camera</title>
+  <meta name="theme-color" content="#f4f1e8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <title>OverSite Camera</title>
   <style>
-    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
+    :root {
+      --ivory: #f4f1e8;
+      --ink: #1d2a25;
+      --ink-soft: #5d6d66;
+      --jade: #149d78;
+      --jade-deep: #0b7d5e;
+      --jade-ink: #0a6b51;
+      --glass: rgba(255, 255, 255, .55);
+      --line: rgba(29, 42, 37, .12);
+      --shadow: 0 8px 30px rgba(21, 64, 48, .12);
+    }
+    body { margin: 0; font-family: "Plus Jakarta Sans", -apple-system, "SF Pro Text", system-ui, sans-serif;
+           color: var(--ink); background: var(--ivory); }
+    /* Liquid-glass backdrop: soft jade and ivory light that the glass panels blur. */
+    body::before { content: ""; position: fixed; inset: 0; z-index: -1;
+      background:
+        radial-gradient(42% 50% at 12% 16%, rgba(20, 157, 120, .17), transparent 70%),
+        radial-gradient(45% 45% at 88% 10%, rgba(122, 196, 165, .20), transparent 70%),
+        radial-gradient(50% 50% at 82% 86%, rgba(20, 157, 120, .13), transparent 70%),
+        radial-gradient(38% 42% at 14% 90%, rgba(224, 190, 116, .16), transparent 70%),
+        var(--ivory);
+    }
     main { max-width: 720px; margin: 0 auto; padding: 16px; }
     #viewer { position: relative; }
-    video { width: 100%; border-radius: 8px; background: #000; display: block; }
-    #rotate { display: none; position: absolute; inset: 0; border-radius: 8px; background: rgba(0, 0, 0, .8);
+    video { width: 100%; border-radius: 18px; background: #0c1512; display: block; border: 1px solid rgba(255, 255, 255, .7); box-shadow: var(--shadow); }
+    #rotate { display: none; position: absolute; inset: 0; border-radius: 18px; background: rgba(16, 32, 27, .72);
+              backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: #fff;
               align-items: center; justify-content: center; text-align: center; font-size: 20px; font-weight: 700; padding: 16px; }
     #rotate.on { display: flex; }
     #setup { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    #setup input { flex: 1 1 200px; padding: 10px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #1c1c1c; color: #eee; }
-    #setup button { padding: 10px 16px; font-size: 16px; border-radius: 6px; border: 0; background: #f0b429; color: #111; font-weight: 700; }
-    #status { color: #888; font-size: 14px; margin: 8px 0; }
-    .hazard { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; }
-    .low { border-color: #e0c341; } .medium { border-color: #f08a24; } .high { border-color: #e5383b; }
-    .hazard.critical { border-color: #ff1f3d; background: #3a0d12; }
-    .kind { font-weight: 600; text-transform: capitalize; }
-    a { color: #f0b429; }
+    #setup input { flex: 1 1 200px; padding: 11px 14px; font-size: 16px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--glass); color: var(--ink); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+    #setup input:focus { outline: none; border-color: var(--jade); box-shadow: 0 0 0 3px rgba(20, 157, 120, .18); }
+    #setup button { padding: 11px 18px; font-size: 16px; font-weight: 650; border-radius: 12px; border: 1px solid rgba(255, 255, 255, .5);
+                    cursor: pointer; color: #fff; font-family: inherit;
+                    background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
+                    box-shadow: 0 6px 16px rgba(20, 157, 120, .32), inset 0 1px 0 rgba(255, 255, 255, .45); }
+    #status { color: var(--ink-soft); font-size: 14px; margin: 10px 0; }
+    .hazard { padding: 12px 14px; margin-bottom: 10px; border-radius: 14px;
+              background: var(--glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+              border: 1px solid rgba(255, 255, 255, .65); border-left-width: 6px;
+              box-shadow: 0 6px 18px rgba(21, 64, 48, .08); }
+    .low { border-left-color: #d9a40f; } .medium { border-left-color: #e0812a; } .high { border-left-color: #d93a42; }
+    .hazard.critical { border-left-color: #e11d48; background: rgba(225, 29, 72, .10); }
+    .kind { font-weight: 700; text-transform: capitalize; }
+    a { color: var(--jade-ink); }
   </style>
 </head>
 <body>
