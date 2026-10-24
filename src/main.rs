@@ -1,6 +1,8 @@
 mod config;
 mod gemini;
+mod openai;
 mod rules;
+mod vision;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -14,7 +16,8 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
-use gemini::{Gemini, Hazard};
+use gemini::Hazard;
+use vision::Vision;
 use rules::{Active, Event, Tracker};
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +25,7 @@ const LOG_LEN: usize = 50; // events kept for the dashboard
 const OFFLINE_AFTER: Duration = Duration::from_secs(10);
 
 struct AppState {
-    gemini: Gemini,
+    vision: Vision,
     cameras: Mutex<HashMap<String, Camera>>,
     log: Mutex<VecDeque<Logged>>,
     // All cameras share one Gemini quota, so calls are spaced globally (15/min on Flash Lite).
@@ -90,20 +93,20 @@ struct CameraView {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = config::Config::load()?;
-    let gemini = Gemini::new(&config)?;
+    let vision = Vision::from_env(&config)?;
     let arg = std::env::args().nth(1);
     let tunnel = arg.as_deref() == Some("--tunnel");
 
     if let Some(path) = arg.filter(|_| !tunnel) {
-        let report = gemini.analyze(&std::fs::read(&path)?, None).await?;
+        let report = vision.analyze(&std::fs::read(&path)?, None).await?;
         println!("{report:#?}");
         return Ok(());
     }
 
     let rpm: u64 = std::env::var("GEMINI_RPM").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
-    let state_has_key = gemini.has_server_key();
+    let state_has_key = vision.has_server_key();
     let state = AppState {
-        gemini,
+        vision,
         cameras: Mutex::default(),
         log: Mutex::default(),
         next_gemini_call: Mutex::new(Instant::now()),
@@ -203,7 +206,7 @@ async fn analyze(
 
     // The mutexes are never held across this await.
     let report = if use_gemini {
-        Some(state.gemini.analyze(&jpeg, user_key).await.map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?)
+        Some(state.vision.analyze(&jpeg, user_key).await.map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?)
     } else {
         None
     };
