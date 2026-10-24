@@ -12,6 +12,7 @@
     input, select, textarea { width: 100%; box-sizing: border-box; padding: 12px; font-size: 16px; border-radius: 6px;
                               border: 1px solid #444; background: #1c1c1c; color: #eee; font-family: inherit; }
     textarea { min-height: 90px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     button { width: 100%; margin-top: 20px; padding: 14px; font-size: 18px; font-weight: 700; border: 0; border-radius: 6px;
              background: #f0b429; color: #111; }
     button:disabled { opacity: .5; }
@@ -33,14 +34,20 @@
     <form id="form">
       <label for="name">Your name</label>
       <input id="name" maxlength="40" placeholder="Optional">
-      <label for="kind">What is it?</label>
-      <select id="kind" required></select>
-      <label for="severity">How serious?</label>
-      <select id="severity">
-        <option value="low">Low: worth knowing</option>
-        <option value="medium" selected>Medium: needs fixing</option>
-        <option value="high">High: someone could get hurt now</option>
-      </select>
+      <div class="row">
+        <div>
+          <label for="kind">What is it?</label>
+          <select id="kind" required></select>
+        </div>
+        <div>
+          <label for="severity">How serious?</label>
+          <select id="severity">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+      </div>
       <label for="location">Where?</label>
       <input id="location" maxlength="200" placeholder="e.g. bay 3, by the loading door" required>
       <label>Tap the map where it is (optional)</label>

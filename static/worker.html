@@ -3,61 +3,175 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111111">
   <title>Hazard Watch Worker</title>
   <style>
-    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
-    main { max-width: 560px; margin: 0 auto; padding: 16px; }
-    h1 { font-size: 20px; margin: 0 0 12px; }
-    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; margin: 18px 0 8px; }
-    a { color: #f0b429; }
-    #setup { display: flex; gap: 8px; }
-    #setup input { flex: 1; padding: 12px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #1c1c1c; color: #eee; }
-    button, .button { padding: 12px 16px; font-size: 16px; font-weight: 700; border: 0; border-radius: 6px; background: #f0b429; color: #111; text-decoration: none; display: inline-block; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; overflow: hidden; overscroll-behavior: none; }
     .muted { color: #777; font-size: 13px; }
+    h1.w { font-size: 20px; margin: 2px 0 12px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; margin: 18px 0 8px; }
+
+    /* Two full-height screens stacked in a deck. Sliding the deck up by half its
+       height brings the report screen into view; the body can't scroll there. */
+    #viewport { height: 100vh; height: 100dvh; overflow: hidden; }
+    #deck { height: 200vh; height: 200dvh; transition: transform .5s cubic-bezier(.25, .9, .3, 1); }
+    #deck.report { transform: translateY(-50%); }
+    .screen { height: 50%; display: flex; flex-direction: column; }
+    .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+
+    /* Bottom tabs: dashboard on the left, account on the right. */
+    .tabbar { display: flex; border-top: 1px solid #242424; background: #161616; padding-bottom: env(safe-area-inset-bottom); }
+    .tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0 11px;
+           border: 0; background: none; color: #777; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .tab svg { width: 22px; height: 22px; }
+    .tab.on { color: #f0b429; }
+
     #alert { display: none; padding: 14px; margin-bottom: 12px; border-radius: 6px; background: #c1121f; font-weight: 700; font-size: 18px; }
     #alert.on { display: block; animation: pulse 1s infinite alternate; }
     @keyframes pulse { to { background: #7a0a13; } }
 
-    /* Same map as the dashboard: positions are fractions (0..1) of width and height. */
-    #map { position: relative; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; cursor: crosshair;
+    /* Maps: positions are fractions (0..1) of width and height. */
+    .map { position: relative; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; cursor: crosshair;
            background-color: #161616;
            background-image: linear-gradient(#262626 1px, transparent 1px), linear-gradient(90deg, #262626 1px, transparent 1px);
            background-size: 10% 10%; }
-    #plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    .map .plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
     .marker { position: absolute; transform: translate(-50%, -50%); }
     .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #111; }
     .dot.low { background: #e0c341; } .dot.medium { background: #f08a24; } .dot.high { background: #e5383b; }
     .dot.critical { background: #ff1f3d; }
     #me { display: none; width: 18px; height: 18px; border-radius: 50%; background: #4ea8de; border: 3px solid #fff; }
     #range { display: none; border: 2px dashed rgba(78, 168, 222, .5); border-radius: 50%; pointer-events: none; }
+    #rpin { position: absolute; display: none; width: 18px; height: 18px; border-radius: 50%; background: #f0b429;
+            border: 2px solid #111; transform: translate(-50%, -50%); }
 
-    .threat { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; }
-    .threat.low { border-color: #e0c341; } .threat.medium { border-color: #f08a24; } .threat.high { border-color: #e5383b; }
-    .threat.critical { border-color: #ff1f3d; background: #3a0d12; }
-    .kind { font-weight: 600; text-transform: capitalize; }
+    .big { width: 100%; padding: 14px; font-size: 17px; font-weight: 700; border: 0; border-radius: 8px;
+           background: #f0b429; color: #111; cursor: pointer; font-family: inherit; }
+    .big:disabled { opacity: .5; }
+    #openReport { margin-top: 14px; }
+    #acct .big { margin-top: 20px; }
+
+    label { display: block; margin: 14px 0 6px; font-size: 14px; color: #aaa; }
+    input, select, textarea { width: 100%; padding: 12px; font-size: 16px; border-radius: 6px;
+                              border: 1px solid #444; background: #1c1c1c; color: #eee; font-family: inherit; }
+    textarea { min-height: 84px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    #send { margin-top: 20px; }
+    #err { color: #ff6b6b; font-size: 14px; margin-top: 10px; }
+
+    .rhead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .rhead h1 { font-size: 20px; margin: 0; flex: 1; }
+    #back { border: 0; background: none; color: #f0b429; font-size: 26px; line-height: 1; cursor: pointer; padding: 4px 10px; }
+
+    /* Recent detections feed. */
+    .notif { display: flex; gap: 10px; align-items: flex-start; padding: 10px 2px; border-bottom: 1px solid #1f1f1f; }
+    .notif .nd { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: #e0c341; }
+    .notif.crit .nd { background: #ff1f3d; animation: ping 1s infinite; }
+    @keyframes ping { 50% { box-shadow: 0 0 0 6px rgba(255, 31, 61, .2); } }
+    .notif .nk { font-size: 14px; font-weight: 600; }
+    .notif .nk .tag { color: #ff5c6e; font-size: 11px; font-weight: 700; letter-spacing: .04em; margin-left: 6px; }
+    .notif .nm { color: #888; font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Success popup: slides in from the bottom with a bounce (overshooting bezier),
+       drops back down with a plain ease. The checkmark's tail pokes out of the circle. */
+    #popup { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 140%);
+             transition: transform .35s ease-in; background: #1c1c1c; border: 1px solid #2e2e2e; border-radius: 14px;
+             padding: 18px 30px 16px; text-align: center; box-shadow: 0 12px 40px rgba(0, 0, 0, .6); z-index: 10; cursor: pointer; }
+    #popup.on { transform: translate(-50%, 0); transition: transform .55s cubic-bezier(.34, 1.56, .64, 1); }
+    #popup h3 { margin: 0; font-size: 18px; }
+    #popup svg { display: block; margin: 10px auto 12px; }
+    #popup p { margin: 0; color: #9a9a9a; font-size: 13px; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Hazard Watch</h1>
-    <form id="setup">
-      <input id="name" placeholder="Your name" maxlength="40" required>
-      <button>Start</button>
-    </form>
-    <div id="app" hidden>
-      <div id="alert"></div>
-      <p id="status" class="muted">Tap the map where you are.</p>
-      <div id="map">
-        <img id="plan" src="/floorplan" alt="">
-        <div id="range" class="marker"></div>
-        <div id="markers"></div>
-        <div id="me" class="marker"></div>
-      </div>
-      <h2>Near you</h2>
-      <div id="nearby"></div>
-      <p><a id="report" class="button" href="/report">Report a hazard</a></p>
+  <div id="viewport">
+    <div id="deck">
+      <section class="screen">
+        <div class="scroll" id="dashPanel">
+          <h1 class="w">Hazard Watch</h1>
+          <div id="alert"></div>
+          <p id="status" class="muted"></p>
+          <div id="map" class="map">
+            <img id="plan" class="plan" src="/floorplan" alt="">
+            <div id="range" class="marker"></div>
+            <div id="markers"></div>
+            <div id="me" class="marker"></div>
+          </div>
+          <button id="openReport" class="big">Report a hazard</button>
+          <h2>Recent notifications</h2>
+          <div id="notes"></div>
+        </div>
+        <div class="scroll" id="accountPanel" hidden>
+          <h1 class="w">Account</h1>
+          <form id="acct">
+            <label for="name">Your name</label>
+            <input id="name" maxlength="40" placeholder="e.g. Jordan" autocomplete="name">
+            <button class="big">Save</button>
+          </form>
+          <p id="nameMsg" class="muted" style="margin-top: 14px">Shown on the dashboard when you check in.</p>
+        </div>
+        <nav class="tabbar">
+          <button class="tab on" id="tabDash" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+            </svg>
+            Dashboard
+          </button>
+          <button class="tab" id="tabAccount" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/>
+            </svg>
+            Account
+          </button>
+        </nav>
+      </section>
+
+      <section class="screen">
+        <div class="scroll">
+          <div class="rhead"><button id="back" type="button" title="Back">←</button><h1>Report a hazard</h1></div>
+          <form id="rform">
+            <div class="row">
+              <div>
+                <label for="kind">What is it?</label>
+                <select id="kind" required></select>
+              </div>
+              <div>
+                <label for="severity">How serious?</label>
+                <select id="severity">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+            </div>
+            <label for="location">Where?</label>
+            <input id="location" maxlength="200" placeholder="e.g. bay 3, by the loading door" required>
+            <label>Tap the map where it is (optional)</label>
+            <div id="rmap" class="map">
+              <img id="rplan" class="plan" src="/floorplan" alt="">
+              <div id="rpin"></div>
+            </div>
+            <label for="note">Details</label>
+            <textarea id="note" maxlength="500" placeholder="What did you see?"></textarea>
+            <button id="send" class="big">Send report</button>
+            <div id="err"></div>
+          </form>
+        </div>
+      </section>
     </div>
-  </main>
+  </div>
+
+  <div id="popup" role="status">
+    <h3>Report submitted!</h3>
+    <svg width="64" height="56" viewBox="0 0 56 48" fill="none">
+      <circle cx="22" cy="27" r="15" stroke="#6fd08c" stroke-width="3"/>
+      <path d="M13 26 L20 33 L42 14" stroke="#6fd08c" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <p>Thanks for keeping the worksite safe.</p>
+  </div>
+
   <script>
     const $ = id => document.getElementById(id);
     const label = kind => kind.replaceAll('_', ' ');
@@ -70,28 +184,43 @@
     const place = (node, pos) => { node.style.left = `${pos.x * 100}%`; node.style.top = `${pos.y * 100}%`; };
 
     const NEARBY = 0.2; // fraction of the map; threats closer than this count as "near you"
-    let name = '', me = null, audio = null;
+    let name = '', me = null, pos = null, audio = null, popupTimer = 0;
     const alerted = new Set(); // "id" or "id:critical", so each threat alerts once (and again if it turns critical)
 
-    try { $('name').value = localStorage.getItem('workerName') || ''; } catch {}
+    try { name = (localStorage.getItem('workerName') || '').trim(); } catch {}
+    $('name').value = name;
 
-    $('plan').onload = () => {
-      $('map').style.aspectRatio = `${$('plan').naturalWidth} / ${$('plan').naturalHeight}`;
-      $('plan').style.display = 'block';
+    for (const img of [$('plan'), $('rplan')]) img.onload = () => {
+      const map = img.parentElement;
+      map.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+      img.style.display = 'block';
     };
 
-    // Start needs a tap: browsers only allow sound (and ask for notifications) after a user gesture.
-    $('setup').addEventListener('submit', e => {
+    function statusUpdate() {
+      $('status').textContent = !name
+        ? 'Tap the map where you are. Add your name in Account to appear on the dashboard.'
+        : !me ? `Hi ${name} — tap the map where you are.`
+        : 'Location set. Tap again if you move.';
+    }
+    statusUpdate();
+
+    // Tabs
+    function showTab(which) {
+      $('tabDash').classList.toggle('on', which === 'dash');
+      $('tabAccount').classList.toggle('on', which === 'account');
+      $('dashPanel').hidden = which !== 'dash';
+      $('accountPanel').hidden = which !== 'account';
+    }
+    $('tabDash').onclick = () => showTab('dash');
+    $('tabAccount').onclick = () => showTab('account');
+
+    $('acct').addEventListener('submit', e => {
       e.preventDefault();
       name = $('name').value.trim();
       try { localStorage.setItem('workerName', name); } catch {}
-      audio = new (window.AudioContext || window.webkitAudioContext)();
-      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
-      $('setup').hidden = true;
-      $('app').hidden = false;
-      poll();
-      setInterval(poll, 2000);
-      setInterval(checkIn, 10000); // keeps us on the dashboard map while the page is open
+      $('nameMsg').textContent = name ? `Saved — you'll show up as ${name}.` : 'Name cleared; reports will be anonymous.';
+      statusUpdate();
+      checkIn();
     });
 
     // "I'm here": tap the map.
@@ -103,23 +232,30 @@
       $('range').style.width = `${NEARBY * 2 * r.width}px`;
       $('range').style.height = `${NEARBY * 2 * r.height}px`;
       $('me').style.display = $('range').style.display = 'block';
-      $('report').href = `/report?x=${me.x}&y=${me.y}`;
-      $('status').textContent = 'Location set. Tap again if you move.';
+      statusUpdate();
       checkIn();
       poll();
     });
 
     function checkIn() {
-      if (!me) return;
-      fetch('/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, pos: me }) });
+      if (name && me) {
+        fetch('/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, pos: me }) });
+      }
     }
+
+    // Sound and notifications need one user gesture; the app auto-starts, so take the first tap.
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
+    addEventListener('pointerdown', () => {
+      audio?.resume?.();
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    }, { once: true });
 
     // Beep, buzz, and a system notification if allowed. Only works while this page is open.
     function alarm(text) {
       $('alert').textContent = `⚠ ${text}`;
       $('alert').className = 'on';
       navigator.vibrate?.([300, 150, 300]);
-      if (audio) {
+      if (audio && audio.state !== 'closed') {
         const osc = audio.createOscillator();
         osc.frequency.value = 880;
         osc.connect(audio.destination);
@@ -131,7 +267,7 @@
 
     const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-    function render({ threats }) {
+    function render({ threats, log }) {
       const dots = [];
       for (const t of threats) {
         const here = t.trail.at(-1);
@@ -142,21 +278,7 @@
       }
       $('markers').replaceChildren(...dots);
 
-      if (!me) {
-        $('nearby').replaceChildren(el('p', 'muted', 'Set your location on the map to see threats near you.'));
-        return;
-      }
-      const near = threats.filter(t => t.trail.length && distance(t.trail.at(-1), me) <= NEARBY);
-      $('nearby').replaceChildren(...(near.length ? near.map(t => {
-        const card = el('div', `threat ${t.critical ? 'critical' : t.severity}`);
-        card.append(
-          el('div', 'kind', `${label(t.kind)} · ${t.critical ? 'CRITICAL' : t.severity}`),
-          el('div', '', t.location),
-          el('div', 'muted', t.reason),
-        );
-        return card;
-      }) : [el('p', 'muted', 'Nothing near you.')]));
-
+      const near = me ? threats.filter(t => t.trail.length && distance(t.trail.at(-1), me) <= NEARBY) : [];
       for (const t of near) {
         const key = t.critical ? `${t.id}:critical` : `${t.id}`;
         if (alerted.has(key)) continue;
@@ -164,7 +286,78 @@
         alarm(t.kind === 'person_down' ? 'Someone may need help nearby!' : `${label(t.kind)} near you: ${t.location}`);
       }
       if (!near.length) $('alert').className = ''; // banner stays up while anything is near you
+
+      // Recent detections feed from the shared event log.
+      const rows = (log || []).filter(e => e.event === 'detected' || e.event === 'critical').slice(0, 10);
+      $('notes').replaceChildren(...(rows.length ? rows.map(e => {
+        const row = el('div', `notif${e.event === 'critical' ? ' crit' : ''}`);
+        const head = el('div', 'nk', label(e.kind));
+        if (e.event === 'critical') head.append(el('span', 'tag', 'CRITICAL'));
+        row.append(
+          el('span', 'nd'),
+          head,
+          el('div', 'nm', `${new Date(e.at_ms).toLocaleTimeString()} · ${e.source}${e.reason ? ` — ${e.reason}` : ''}`),
+        );
+        return row;
+      }) : [el('p', 'muted', 'No detections yet.')]));
     }
+
+    // ---- Report screen (slides in from below) ----
+    function setPin() {
+      $('rpin').style.display = pos ? 'block' : 'none';
+      if (pos) place($('rpin'), pos);
+    }
+    $('rmap').addEventListener('click', e => {
+      const r = $('rmap').getBoundingClientRect();
+      pos = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+      setPin();
+    });
+
+    $('openReport').onclick = () => {
+      pos = me ? { ...me } : null; // start the pin where the worker is, if they've said
+      $('location').value = '';
+      $('note').value = '';
+      $('err').textContent = '';
+      setPin();
+      $('deck').classList.add('report');
+    };
+    $('back').onclick = () => $('deck').classList.remove('report');
+
+    fetch('/kinds').then(r => r.json()).then(kinds => {
+      for (const k of kinds) {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.textContent = label(k);
+        $('kind').appendChild(opt);
+      }
+    });
+
+    $('rform').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('send').disabled = true;
+      try {
+        const res = await fetch('/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name, kind: $('kind').value, severity: $('severity').value,
+            location: $('location').value, note: $('note').value, pos,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        $('deck').classList.remove('report');
+        poll();
+        clearTimeout(popupTimer);
+        popupTimer = setTimeout(() => {
+          $('popup').classList.add('on');
+          popupTimer = setTimeout(() => $('popup').classList.remove('on'), 3000);
+        }, 400);
+      } catch (err) {
+        $('err').textContent = `Could not send: ${err.message}`;
+      }
+      $('send').disabled = false;
+    });
+    $('popup').onclick = () => { clearTimeout(popupTimer); $('popup').classList.remove('on'); };
 
     async function poll() {
       try {
@@ -172,6 +365,11 @@
         if (res.ok) render(await res.json());
       } catch {}
     }
+
+    // Auto-start: no sign-in step, everything begins on load.
+    poll();
+    setInterval(poll, 2000);
+    setInterval(checkIn, 10000); // keeps us on the dashboard map while the page is open
   </script>
 </body>
 </html>
