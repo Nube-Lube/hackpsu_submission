@@ -1,0 +1,37 @@
+# What Gemini looks for. Edit and restart the server to change it.
+# This file is also built into the exe as the default, used when no hazards.toml is next to it.
+
+prompt = """
+You are a workplace safety inspector looking at one frame from a construction/warehouse camera.
+List every hazard of the kinds below that you can see.
+Only report what is clearly visible. If nothing is hazardous, return an empty list.
+"""
+
+# kind:                 short id shown on the dashboard (snake_case)
+# description:          what Gemini should look for
+# critical_after_secs:  optional; once confirmed this long, the hazard becomes CRITICAL
+
+[[hazard]]
+kind = "person_down"
+description = "a person lying or collapsed on the ground"
+critical_after_secs = 15
+
+[[hazard]]
+kind = "spill"
+description = "spills, puddles, or wet floors"
+
+[[hazard]]
+kind = "trip_hazard"
+description = "cables, cords, tools, or clutter lying in a walkway"
+
+[[hazard]]
+kind = "missing_ppe"
+description = "a worker without a hard hat or high-visibility vest"
+
+[[hazard]]
+kind = "unprotected_edge"
+description = "an unguarded edge, open hole, or missing railing someone could fall from"
+
+[[hazard]]
+kind = "other"
+description = "any other clearly visible slip, trip, or fall hazard"

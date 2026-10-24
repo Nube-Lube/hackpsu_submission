@@ -1,3 +1,4 @@
+mod config;
 mod gemini;
 mod rules;
 
@@ -27,9 +28,9 @@ struct AppState {
     // All cameras share one Gemini quota, so calls are spaced globally (15/min on Flash Lite).
     next_gemini_call: Mutex<Instant>,
     gemini_gap: Duration,
+    critical_after: HashMap<String, Duration>, // copied into each new camera's tracker
 }
 
-#[derive(Default)]
 struct Camera {
     tracker: Tracker,
     last_raw: Vec<Hazard>,  // Gemini's latest answer, reused while the scene is unchanged
@@ -88,7 +89,8 @@ struct CameraView {
 // `hackpsu photo.jpg`  analyze one image and print the result
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let gemini = Gemini::from_env()?;
+    let config = config::Config::load()?;
+    let gemini = Gemini::new(&config)?;
     let arg = std::env::args().nth(1);
     let tunnel = arg.as_deref() == Some("--tunnel");
 
@@ -105,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
         log: Mutex::default(),
         next_gemini_call: Mutex::new(Instant::now()),
         gemini_gap: Duration::from_millis(60_000 / rpm),
+        critical_after: config.critical_after(),
     };
 
     let app = Router::new()
@@ -195,7 +198,13 @@ async fn analyze(
 
     let now = Instant::now();
     let mut cameras = state.cameras.lock().unwrap();
-    let cam = cameras.entry(name.clone()).or_default();
+    let cam = cameras.entry(name.clone()).or_insert_with(|| Camera {
+        tracker: Tracker::new(state.critical_after.clone()),
+        last_raw: Vec::new(),
+        last_frame: Bytes::new(),
+        frame_version: 0,
+        last_seen: None,
+    });
     cam.last_seen = Some(now);
     let events = match report {
         Some(report) => {

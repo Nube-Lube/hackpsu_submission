@@ -3,11 +3,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-const PROMPT: &str = "You are a workplace safety inspector looking at one frame from a \
-construction/warehouse camera. List every slip, trip, or fall hazard you can see: \
-a person lying on the ground, spills or wet floors, cables or clutter in walkways, \
-workers missing hard hats or high-visibility vests, and unprotected edges or open holes. \
-Only report what is clearly visible. If nothing is hazardous, return an empty list.";
+use crate::config::Config;
 
 // What we want back. Gemini is forced to match this via `responseSchema`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,21 +13,10 @@ pub struct Report {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hazard {
-    pub kind: HazardKind,
+    pub kind: String, // one of the kinds in hazards.toml
     pub severity: Severity,
     pub location: String,
     pub reason: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum HazardKind {
-    PersonDown,
-    Spill,
-    TripHazard,
-    MissingPpe,
-    UnprotectedEdge,
-    Other,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -46,10 +31,12 @@ pub struct Gemini {
     http: reqwest::Client,
     api_key: String,
     model: String,
+    prompt: String,
+    kinds: Vec<String>,
 }
 
 impl Gemini {
-    pub fn from_env() -> Result<Self> {
+    pub fn new(config: &Config) -> Result<Self> {
         Ok(Self {
             http: reqwest::Client::new(),
             // GEMINI_API_KEY (handy on a server), else the gitignored key file holding only the raw key.
@@ -61,6 +48,8 @@ impl Gemini {
             .trim()
             .to_string(),
             model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".into()),
+            prompt: config.prompt(),
+            kinds: config.kinds(),
         })
     }
 
@@ -76,12 +65,12 @@ impl Gemini {
                         "mime_type": "image/jpeg",
                         "data": base64::engine::general_purpose::STANDARD.encode(jpeg),
                     }},
-                    { "text": PROMPT },
+                    { "text": self.prompt },
                 ]
             }],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "responseSchema": schema(),
+                "responseSchema": schema(&self.kinds),
             }
         });
 
@@ -112,7 +101,7 @@ impl Gemini {
     }
 }
 
-fn schema() -> serde_json::Value {
+fn schema(kinds: &[String]) -> serde_json::Value {
     json!({
         "type": "OBJECT",
         "properties": {
@@ -121,10 +110,7 @@ fn schema() -> serde_json::Value {
                 "items": {
                     "type": "OBJECT",
                     "properties": {
-                        "kind": { "type": "STRING", "enum": [
-                            "person_down", "spill", "trip_hazard",
-                            "missing_ppe", "unprotected_edge", "other"
-                        ]},
+                        "kind": { "type": "STRING", "enum": kinds },
                         "severity": { "type": "STRING", "enum": ["low", "medium", "high"] },
                         "location": { "type": "STRING" },
                         "reason": { "type": "STRING" },
