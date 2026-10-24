@@ -10,12 +10,12 @@ workers missing hard hats or high-visibility vests, and unprotected edges or ope
 Only report what is clearly visible. If nothing is hazardous, return an empty list.";
 
 // What we want back. Gemini is forced to match this via `responseSchema`.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
     pub hazards: Vec<Hazard>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hazard {
     pub kind: HazardKind,
     pub severity: Severity,
@@ -57,7 +57,7 @@ impl Gemini {
                 .context("missing .env/gemini_api.env")?
                 .trim()
                 .to_string(),
-            model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.6-flash".into()),
+            model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.5-flash-lite".into()),
         })
     }
 

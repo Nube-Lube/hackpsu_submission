@@ -12,16 +12,31 @@
     .hazard { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; }
     .low { border-color: #e0c341; } .medium { border-color: #f08a24; } .high { border-color: #e5383b; }
     .kind { font-weight: 600; text-transform: capitalize; }
+    .hazard.critical { border-color: #ff1f3d; background: #3a0d12; }
+    .pending { opacity: .5; font-size: 14px; }
+    #banner { display: none; padding: 14px 16px; background: #c1121f; font-weight: 700; font-size: 20px; }
+    #banner.on { display: block; animation: pulse 1s infinite alternate; }
+    @keyframes pulse { to { background: #7a0a13; } }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #888; margin: 16px 0 8px; }
+    #log { font-size: 13px; color: #bbb; max-height: 240px; overflow-y: auto; }
     @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
+  <div id="banner"></div>
   <main>
     <section>
       <video id="cam" autoplay playsinline muted></video>
       <div id="status">starting camera…</div>
     </section>
-    <section id="hazards"></section>
+    <section>
+      <h2>Active hazards</h2>
+      <div id="hazards"></div>
+      <h2>Checking…</h2>
+      <div id="pending"></div>
+      <h2>Event log</h2>
+      <div id="log"></div>
+    </section>
   </main>
   <canvas id="frame" hidden></canvas>
   <script>
@@ -29,6 +44,10 @@
     const canvas = document.getElementById('frame');
     const status = document.getElementById('status');
     const list = document.getElementById('hazards');
+    const pending = document.getElementById('pending');
+    const log = document.getElementById('log');
+    const banner = document.getElementById('banner');
+    const label = kind => kind.replaceAll('_', ' ');
 
     // Grab the current video frame as JPEG bytes.
     function snapshot() {
@@ -38,32 +57,87 @@
       return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
     }
 
-    function render(report) {
-      list.innerHTML = report.hazards.length ? '' : '<p>No hazards detected.</p>';
-      for (const h of report.hazards) {
+    function render({ active, raw, events }) {
+      // Confirmed hazards (seen in 2 of the last 3 frames).
+      list.innerHTML = active.length ? '' : '<p>No hazards detected.</p>';
+      for (const h of active) {
         const div = document.createElement('div');
-        div.className = `hazard ${h.severity}`;
+        div.className = `hazard ${h.critical ? 'critical' : h.severity}`;
         div.innerHTML = `<div class="kind"></div><div class="where"></div><div class="why"></div>`;
-        div.querySelector('.kind').textContent = `${h.kind.replaceAll('_', ' ')} · ${h.severity}`;
+        div.querySelector('.kind').textContent =
+          `${label(h.kind)} · ${h.critical ? 'CRITICAL' : h.severity} · ${h.seconds}s`;
         div.querySelector('.where').textContent = h.location;
         div.querySelector('.why').textContent = h.reason;
         list.appendChild(div);
       }
+
+      // Seen this frame but not confirmed yet.
+      const confirmed = new Set(active.map(h => h.kind));
+      const unconfirmed = raw.filter(h => !confirmed.has(h.kind));
+      pending.textContent = unconfirmed.map(h => label(h.kind)).join(', ') || '—';
+      pending.className = 'pending';
+
+      const critical = active.find(h => h.critical);
+      banner.className = critical ? 'on' : '';
+      banner.textContent = critical ? `⚠ ${label(critical.kind).toUpperCase()}: ${critical.location}` : '';
+
+      for (const e of events) {
+        const row = document.createElement('div');
+        row.textContent = `${new Date().toLocaleTimeString()}  ${e.event.toUpperCase()}  ${label(e.kind)}${e.reason ? ' — ' + e.reason : ''}`;
+        log.prepend(row);
+      }
     }
 
-    // Send a frame, wait for the answer, then send the next one (never piles up requests).
+    // Tiny grayscale copy of the frame, used only to tell whether the scene changed.
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = 32; thumbCanvas.height = 24;
+    const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
+    function thumbnail() {
+      thumbCtx.drawImage(video, 0, 0, 32, 24);
+      const px = thumbCtx.getImageData(0, 0, 32, 24).data;
+      const gray = new Float32Array(32 * 24);
+      for (let i = 0; i < gray.length; i++) gray[i] = (px[4 * i] + px[4 * i + 1] + px[4 * i + 2]) / 3;
+      return gray;
+    }
+    // Average per-pixel brightness difference, 0..255.
+    function difference(a, b) {
+      let sum = 0;
+      for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+      return sum / a.length;
+    }
+
+    const CHANGE_THRESHOLD = 6;  // brightness difference that counts as "scene changed"
+    const MIN_GAP_MS = 4000;     // stay under 15 Gemini requests/minute
+    const HEARTBEAT_MS = 30000;  // re-check with Gemini at least this often anyway
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    let lastThumb = null, lastSent = 0, pendingHazards = false, geminiCalls = 0;
+
+    // Every second: ask Gemini only if the scene changed, a hazard needs confirming,
+    // or the heartbeat is due. Otherwise send an empty "unchanged" tick (free, no Gemini).
     async function loop() {
       while (true) {
-        const started = performance.now();
+        const thumb = thumbnail();
+        const since = performance.now() - lastSent;
+        const changed = !lastThumb || difference(thumb, lastThumb) > CHANGE_THRESHOLD;
+        const useGemini = since >= MIN_GAP_MS && (changed || pendingHazards || since >= HEARTBEAT_MS);
         try {
-          const res = await fetch('/analyze', { method: 'POST', body: await snapshot() });
+          const res = await fetch('/analyze', { method: 'POST', body: useGemini ? await snapshot() : '' });
           if (!res.ok) throw new Error(await res.text());
-          render(await res.json());
-          status.textContent = `checked at ${new Date().toLocaleTimeString()} (took ${((performance.now() - started) / 1000).toFixed(1)}s)`;
+          const analysis = await res.json();
+          render(analysis);
+          const confirmed = new Set(analysis.active.map(h => h.kind));
+          pendingHazards = analysis.raw.some(h => !confirmed.has(h.kind));
+          if (useGemini) {
+            lastThumb = thumb; lastSent = performance.now(); geminiCalls++;
+          }
+          status.textContent = `${useGemini ? 'checked with Gemini' : 'scene unchanged'} · ` +
+            `${new Date().toLocaleTimeString()} · ${geminiCalls} Gemini calls`;
         } catch (e) {
+          if (useGemini) lastSent = performance.now(); // don't hammer the API after an error
           status.textContent = `check failed, retrying: ${e.message}`;
-          await new Promise(r => setTimeout(r, 2000));
         }
+        await sleep(1000);
       }
     }
 
