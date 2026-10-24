@@ -52,7 +52,11 @@ impl Gemini {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             http: reqwest::Client::new(),
-            api_key: std::env::var("GEMINI_API_KEY").context("GEMINI_API_KEY not set")?,
+            // The key file holds only the raw key (and is gitignored).
+            api_key: std::fs::read_to_string(".env/gemini_api.env")
+                .context("missing .env/gemini_api.env")?
+                .trim()
+                .to_string(),
             model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.6-flash".into()),
         })
     }

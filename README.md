@@ -1,5 +1,3 @@
-# hackpsu_submission
-
 Overview:
 Project that uses cameras and AI vision to detect workplace safety hazards
 
