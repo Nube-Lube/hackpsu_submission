@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Query, State},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse},
     routing::{get, post},
 };
@@ -95,12 +95,13 @@ async fn main() -> anyhow::Result<()> {
     let tunnel = arg.as_deref() == Some("--tunnel");
 
     if let Some(path) = arg.filter(|_| !tunnel) {
-        let report = gemini.analyze(&std::fs::read(&path)?).await?;
+        let report = gemini.analyze(&std::fs::read(&path)?, None).await?;
         println!("{report:#?}");
         return Ok(());
     }
 
     let rpm: u64 = std::env::var("GEMINI_RPM").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
+    let state_has_key = gemini.has_server_key();
     let state = AppState {
         gemini,
         cameras: Mutex::default(),
@@ -121,6 +122,9 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
     println!("dashboard: http://localhost:3000   camera: http://localhost:3000/camera");
+    if !state_has_key {
+        println!("no server Gemini key: each camera must enter its own key on the camera page");
+    }
     // Held until the server stops; dropping it kills cloudflared.
     let _tunnel = if tunnel { Some(start_tunnel()?) } else { None };
     axum::serve(listener, app).await?;
@@ -172,13 +176,21 @@ fn print_qr(url: &str) {
 async fn analyze(
     State(state): State<Arc<AppState>>,
     Query(q): Query<CameraQuery>,
+    headers: HeaderMap,
     jpeg: Bytes,
 ) -> Result<Json<Analysis>, (StatusCode, String)> {
     let name = q.name();
+    // BYOK: a camera may send its own Gemini key. Used for this request only, never stored or logged.
+    let user_key = headers
+        .get("x-gemini-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|k| !k.is_empty());
 
     // Take a Gemini slot if one is free; otherwise treat this frame as unchanged and
     // let the camera try again next second. Cameras end up taking turns.
-    let use_gemini = !jpeg.is_empty() && {
+    // Cameras with their own key have their own quota, so they skip the shared slot.
+    let use_gemini = !jpeg.is_empty() && (user_key.is_some() || {
         let mut next = state.next_gemini_call.lock().unwrap();
         let now = Instant::now();
         if now >= *next {
@@ -187,11 +199,11 @@ async fn analyze(
         } else {
             false
         }
-    };
+    });
 
     // The mutexes are never held across this await.
     let report = if use_gemini {
-        Some(state.gemini.analyze(&jpeg).await.map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?)
+        Some(state.gemini.analyze(&jpeg, user_key).await.map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?)
     } else {
         None
     };

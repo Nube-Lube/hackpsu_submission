@@ -8,8 +8,8 @@
     body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
     main { max-width: 720px; margin: 0 auto; padding: 16px; }
     video { width: 100%; border-radius: 8px; background: #000; }
-    #setup { display: flex; gap: 8px; margin-bottom: 12px; }
-    #setup input { flex: 1; padding: 10px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #1c1c1c; color: #eee; }
+    #setup { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    #setup input { flex: 1 1 200px; padding: 10px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #1c1c1c; color: #eee; }
     #setup button { padding: 10px 16px; font-size: 16px; border-radius: 6px; border: 0; background: #f0b429; color: #111; font-weight: 700; }
     #status { color: #888; font-size: 14px; margin: 8px 0; }
     .hazard { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; }
@@ -23,6 +23,7 @@
   <main>
     <form id="setup">
       <input id="name" placeholder="Camera name, e.g. Loading Dock" maxlength="40" required>
+      <input id="key" type="password" placeholder="Your Gemini API key (optional)" autocomplete="off">
       <button>Start</button>
     </form>
     <video id="cam" autoplay playsinline muted></video>
@@ -37,11 +38,14 @@
     const list = document.getElementById('hazards');
     const setup = document.getElementById('setup');
     const nameInput = document.getElementById('name');
+    const keyInput = document.getElementById('key');
     const label = kind => kind.replaceAll('_', ' ');
 
     // Remember the name per device; ?name=... in the URL overrides it.
     try { nameInput.value = new URLSearchParams(location.search).get('name') || localStorage.getItem('cameraName') || ''; } catch {}
-    let cameraName = '';
+    // BYOK: an optional personal Gemini key, kept only in this browser and sent with each frame.
+    try { keyInput.value = localStorage.getItem('geminiKey') || ''; } catch {}
+    let cameraName = '', geminiKey = '';
 
     // Grab the current video frame as JPEG bytes, at most 1024 px wide (phones shoot 4K).
     function snapshot() {
@@ -104,8 +108,11 @@
         const changed = !lastThumb || difference(thumb, lastThumb) > CHANGE_THRESHOLD;
         const wantGemini = since >= MIN_GAP_MS && (changed || pendingHazards || since >= HEARTBEAT_MS);
         try {
-          const res = await fetch(`/analyze?camera=${encodeURIComponent(cameraName)}`,
-            { method: 'POST', body: wantGemini ? await snapshot() : '' });
+          const res = await fetch(`/analyze?camera=${encodeURIComponent(cameraName)}`, {
+            method: 'POST',
+            body: wantGemini ? await snapshot() : '',
+            headers: geminiKey ? { 'X-Gemini-Key': geminiKey } : {},
+          });
           if (!res.ok) throw new Error(await res.text());
           const analysis = await res.json();
           render(analysis);
@@ -115,7 +122,7 @@
             lastThumb = thumb; lastSent = performance.now(); geminiCalls++;
           }
           const what = analysis.checked ? 'checked with Gemini' : wantGemini ? 'waiting for a Gemini slot' : 'scene unchanged';
-          status.textContent = `${cameraName} · ${what} · ${geminiCalls} Gemini calls`;
+          status.textContent = `${cameraName} · ${what} · ${geminiCalls} Gemini calls (${geminiKey ? 'your key' : 'shared key'})`;
         } catch (e) {
           if (wantGemini) lastSent = performance.now(); // don't hammer the API after an error
           status.textContent = `check failed, retrying: ${e.message}`;
@@ -128,7 +135,8 @@
     setup.addEventListener('submit', async e => {
       e.preventDefault();
       cameraName = nameInput.value.trim();
-      try { localStorage.setItem('cameraName', cameraName); } catch {}
+      geminiKey = keyInput.value.trim();
+      try { localStorage.setItem('cameraName', cameraName); localStorage.setItem('geminiKey', geminiKey); } catch {}
       try {
         video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         setup.hidden = true;
