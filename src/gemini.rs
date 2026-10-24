@@ -82,16 +82,24 @@ impl Gemini {
             }
         });
 
-        let resp: serde_json::Value = self
-            .http
-            .post(url)
-            .header("x-goog-api-key", &self.api_key)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        // Gemini returns 503 (overloaded) / 429 (rate limited) fairly often; retry with backoff.
+        let mut attempt = 0;
+        let resp: serde_json::Value = loop {
+            let r = self
+                .http
+                .post(&url)
+                .header("x-goog-api-key", &self.api_key)
+                .json(&body)
+                .send()
+                .await?;
+            let status = r.status();
+            if (status.is_server_error() || status.as_u16() == 429) && attempt < 3 {
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(500 * 2u64.pow(attempt))).await;
+                continue;
+            }
+            break r.error_for_status()?.json().await?;
+        };
 
         // The JSON we asked for arrives as a string inside the first candidate.
         let text = resp["candidates"][0]["content"]["parts"][0]["text"]
