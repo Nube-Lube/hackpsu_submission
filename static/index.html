@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hazard Watch</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
+    main { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px; }
+    video { width: 100%; border-radius: 8px; background: #000; }
+    #status { color: #888; font-size: 14px; }
+    .hazard { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; }
+    .low { border-color: #e0c341; } .medium { border-color: #f08a24; } .high { border-color: #e5383b; }
+    .kind { font-weight: 600; text-transform: capitalize; }
+    @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <video id="cam" autoplay playsinline muted></video>
+      <div id="status">starting camera…</div>
+    </section>
+    <section id="hazards"></section>
+  </main>
+  <canvas id="frame" hidden></canvas>
+  <script>
+    const video = document.getElementById('cam');
+    const canvas = document.getElementById('frame');
+    const status = document.getElementById('status');
+    const list = document.getElementById('hazards');
+
+    // Grab the current video frame as JPEG bytes.
+    function snapshot() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+    }
+
+    function render(report) {
+      list.innerHTML = report.hazards.length ? '' : '<p>No hazards detected.</p>';
+      for (const h of report.hazards) {
+        const div = document.createElement('div');
+        div.className = `hazard ${h.severity}`;
+        div.innerHTML = `<div class="kind"></div><div class="where"></div><div class="why"></div>`;
+        div.querySelector('.kind').textContent = `${h.kind.replaceAll('_', ' ')} · ${h.severity}`;
+        div.querySelector('.where').textContent = h.location;
+        div.querySelector('.why').textContent = h.reason;
+        list.appendChild(div);
+      }
+    }
+
+    // Send a frame, wait for the answer, then send the next one (never piles up requests).
+    async function loop() {
+      while (true) {
+        const started = performance.now();
+        try {
+          const res = await fetch('/analyze', { method: 'POST', body: await snapshot() });
+          if (!res.ok) throw new Error(await res.text());
+          render(await res.json());
+          status.textContent = `checked at ${new Date().toLocaleTimeString()} (took ${((performance.now() - started) / 1000).toFixed(1)}s)`;
+        } catch (e) {
+          status.textContent = `check failed, retrying: ${e.message}`;
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+    }
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(stream => { video.srcObject = stream; video.onloadeddata = loop; })
+      .catch(e => status.textContent = `camera error: ${e.message}`);
+  </script>
+</body>
+</html>

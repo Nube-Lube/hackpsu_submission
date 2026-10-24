@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use base64::Engine;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 const PROMPT: &str = "You are a workplace safety inspector looking at one frame from a \
@@ -10,12 +10,12 @@ workers missing hard hats or high-visibility vests, and unprotected edges or ope
 Only report what is clearly visible. If nothing is hazardous, return an empty list.";
 
 // What we want back. Gemini is forced to match this via `responseSchema`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Report {
     pub hazards: Vec<Hazard>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Hazard {
     pub kind: HazardKind,
     pub severity: Severity,
@@ -23,7 +23,7 @@ pub struct Hazard {
     pub reason: String,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum HazardKind {
     PersonDown,
@@ -34,7 +34,7 @@ pub enum HazardKind {
     Other,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     Low,
