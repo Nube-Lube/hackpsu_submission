@@ -32,7 +32,7 @@ pub struct Active {
     pub seconds: u64,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
     Detected { kind: HazardKind, reason: String },

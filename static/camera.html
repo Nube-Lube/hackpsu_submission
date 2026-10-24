@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hazard Watch Camera</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; }
+    main { max-width: 720px; margin: 0 auto; padding: 16px; }
+    video { width: 100%; border-radius: 8px; background: #000; }
+    #setup { display: flex; gap: 8px; margin-bottom: 12px; }
+    #setup input { flex: 1; padding: 10px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #1c1c1c; color: #eee; }
+    #setup button { padding: 10px 16px; font-size: 16px; border-radius: 6px; border: 0; background: #f0b429; color: #111; font-weight: 700; }
+    #status { color: #888; font-size: 14px; margin: 8px 0; }
+    .hazard { padding: 10px; margin-bottom: 8px; border-radius: 6px; border-left: 6px solid; background: #1c1c1c; }
+    .low { border-color: #e0c341; } .medium { border-color: #f08a24; } .high { border-color: #e5383b; }
+    .hazard.critical { border-color: #ff1f3d; background: #3a0d12; }
+    .kind { font-weight: 600; text-transform: capitalize; }
+    a { color: #f0b429; }
+  </style>
+</head>
+<body>
+  <main>
+    <form id="setup">
+      <input id="name" placeholder="Camera name, e.g. Loading Dock" maxlength="40" required>
+      <button>Start</button>
+    </form>
+    <video id="cam" autoplay playsinline muted></video>
+    <div id="status">Name this camera and press Start. <a href="/">Open dashboard</a></div>
+    <div id="hazards"></div>
+  </main>
+  <canvas id="frame" hidden></canvas>
+  <script>
+    const video = document.getElementById('cam');
+    const canvas = document.getElementById('frame');
+    const status = document.getElementById('status');
+    const list = document.getElementById('hazards');
+    const setup = document.getElementById('setup');
+    const nameInput = document.getElementById('name');
+    const label = kind => kind.replaceAll('_', ' ');
+
+    // Remember the name per device; ?name=... in the URL overrides it.
+    try { nameInput.value = new URLSearchParams(location.search).get('name') || localStorage.getItem('cameraName') || ''; } catch {}
+    let cameraName = '';
+
+    // Grab the current video frame as JPEG bytes, at most 1024 px wide (phones shoot 4K).
+    function snapshot() {
+      const scale = Math.min(1, 1024 / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+    }
+
+    // This camera's own confirmed hazards (the dashboard shows everything).
+    function render({ active }) {
+      list.replaceChildren();
+      for (const h of active) {
+        const div = document.createElement('div');
+        div.className = `hazard ${h.critical ? 'critical' : h.severity}`;
+        const kind = document.createElement('div');
+        kind.className = 'kind';
+        kind.textContent = `${label(h.kind)} · ${h.critical ? 'CRITICAL' : h.severity}`;
+        const why = document.createElement('div');
+        why.textContent = h.reason;
+        div.append(kind, why);
+        list.appendChild(div);
+      }
+    }
+
+    // Tiny grayscale copy of the frame, used only to tell whether the scene changed.
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = 32; thumbCanvas.height = 24;
+    const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
+    function thumbnail() {
+      thumbCtx.drawImage(video, 0, 0, 32, 24);
+      const px = thumbCtx.getImageData(0, 0, 32, 24).data;
+      const gray = new Float32Array(32 * 24);
+      for (let i = 0; i < gray.length; i++) gray[i] = (px[4 * i] + px[4 * i + 1] + px[4 * i + 2]) / 3;
+      return gray;
+    }
+    // Average per-pixel brightness difference, 0..255.
+    function difference(a, b) {
+      let sum = 0;
+      for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+      return sum / a.length;
+    }
+
+    const CHANGE_THRESHOLD = 6;  // brightness difference that counts as "scene changed"
+    const MIN_GAP_MS = 4000;     // per camera; the server also spaces calls across all cameras
+    const HEARTBEAT_MS = 30000;  // re-check with Gemini at least this often anyway
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    let lastThumb = null, lastSent = 0, pendingHazards = false, geminiCalls = 0;
+
+    // Every second: offer a frame only if the scene changed, a hazard needs confirming,
+    // or the heartbeat is due. Otherwise send an empty "unchanged" tick (free, no Gemini).
+    // The server may still decline (another camera has the Gemini slot): then `checked`
+    // is false and we simply offer again next second.
+    async function loop() {
+      while (true) {
+        const thumb = thumbnail();
+        const since = performance.now() - lastSent;
+        const changed = !lastThumb || difference(thumb, lastThumb) > CHANGE_THRESHOLD;
+        const wantGemini = since >= MIN_GAP_MS && (changed || pendingHazards || since >= HEARTBEAT_MS);
+        try {
+          const res = await fetch(`/analyze?camera=${encodeURIComponent(cameraName)}`,
+            { method: 'POST', body: wantGemini ? await snapshot() : '' });
+          if (!res.ok) throw new Error(await res.text());
+          const analysis = await res.json();
+          render(analysis);
+          const confirmed = new Set(analysis.active.map(h => h.kind));
+          pendingHazards = analysis.raw.some(h => !confirmed.has(h.kind));
+          if (analysis.checked) {
+            lastThumb = thumb; lastSent = performance.now(); geminiCalls++;
+          }
+          const what = analysis.checked ? 'checked with Gemini' : wantGemini ? 'waiting for a Gemini slot' : 'scene unchanged';
+          status.textContent = `${cameraName} · ${what} · ${geminiCalls} Gemini calls`;
+        } catch (e) {
+          if (wantGemini) lastSent = performance.now(); // don't hammer the API after an error
+          status.textContent = `check failed, retrying: ${e.message}`;
+        }
+        await sleep(1000);
+      }
+    }
+
+    // Camera access needs a user gesture on some phones, so it starts from the button.
+    setup.addEventListener('submit', async e => {
+      e.preventDefault();
+      cameraName = nameInput.value.trim();
+      try { localStorage.setItem('cameraName', cameraName); } catch {}
+      try {
+        video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        setup.hidden = true;
+        video.onloadeddata = loop;
+      } catch (err) {
+        status.textContent = `camera error: ${err.message} (phones need the https:// link)`;
+      }
+    });
+  </script>
+</body>
+</html>
