@@ -48,13 +48,17 @@
 
     /* Scrollable flex items must be allowed to shrink below their content,
        otherwise they grow and clip instead of scrolling (the mobile scroll bug). */
-    .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+    .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px;
+              scrollbar-width: none; }
+    .scroll::-webkit-scrollbar { display: none; }
 
     /* Dashboard and account panels sit side by side; the track slides between them. */
     #panels { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; width: 200%;
               transition: transform .4s cubic-bezier(.25, .9, .3, 1); }
     #panels.account { transform: translateX(-50%); }
-    .panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 16px 28px; }
+    .panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 16px 28px;
+             scrollbar-width: none; }
+    .panel::-webkit-scrollbar { display: none; }
 
     /* Bottom tabs: dashboard on the left, account on the right. */
     .tabbar { display: flex; border-top: 1px solid rgba(255, 255, 255, .65); background: rgba(255, 255, 255, .62);
@@ -65,13 +69,6 @@
            cursor: pointer; border-radius: 12px; }
     .tab svg { width: 22px; height: 22px; }
     .tab.on { color: var(--jade-ink); background: rgba(20, 157, 120, .14); box-shadow: inset 0 0 0 1px rgba(20, 157, 120, .18); }
-
-    #alert { display: none; padding: 14px; margin-bottom: 12px; border-radius: 14px; color: #fff; font-weight: 700; font-size: 17px;
-             background: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 45%), rgba(219, 45, 57, .92);
-             border: 1px solid rgba(255, 255, 255, .4); box-shadow: var(--shadow);
-             backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
-    #alert.on { display: block; animation: pulse 1s infinite alternate; }
-    @keyframes pulse { to { background-color: rgba(154, 18, 30, .92); } }
 
     /* Maps: positions are fractions (0..1) of width and height. */
     .map { position: relative; aspect-ratio: 16 / 10; border-radius: 18px; overflow: hidden; cursor: crosshair;
@@ -88,7 +85,6 @@
     @keyframes ping { 50% { box-shadow: 0 0 0 8px rgba(225, 29, 72, .25); } }
     #me { display: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 4px solid var(--jade);
           box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
-    #range { display: none; border: 2px dashed rgba(20, 157, 120, .55); border-radius: 50%; pointer-events: none; }
     #rpin { position: absolute; display: none; width: 20px; height: 20px; border-radius: 50%; background: var(--jade);
             border: 2px solid #fff; transform: translate(-50%, -50%); box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
 
@@ -112,12 +108,14 @@
     #send { margin-top: 20px; }
     #err { color: #c01037; font-size: 14px; margin-top: 10px; }
 
-    /* Sheet-style header: round back button top-left, big title centered below it. */
-    .rhead { display: flow-root; position: relative; margin: 4px 0 0; text-align: center; }
-    .rhead h1 { font-size: 44px; font-weight: 800; margin: 70px 0 14px; letter-spacing: -.02em; text-wrap: balance; }
-    #back { position: absolute; left: 0; top: 6px; width: 60px; height: 60px; border-radius: 50%;
+    /* Title truly centered: the ::after spacer matches the back button's width,
+       making the title's box symmetric about the screen center. */
+    .rhead { display: flex; align-items: center; gap: 8px; margin: 4px 0 14px; }
+    .rhead::after { content: ""; flex: none; width: 44px; }
+    .rhead h1 { flex: 1; min-width: 0; text-align: center; font-size: 37px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
+    #back { flex: none; width: 44px; height: 38px; border-radius: 12px;
             border: 1px solid rgba(20, 157, 120, .25); background: rgba(20, 157, 120, .14); color: var(--jade-ink);
-            font-size: 38px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            font-size: 22px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
             backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 4px 12px rgba(21, 64, 48, .10); }
     #back:active { transform: scale(.92); }
 
@@ -131,6 +129,36 @@
     .notif .nk { font-size: 14px; font-weight: 650; }
     .notif .nk .tag { color: #c01037; font-size: 11px; font-weight: 800; letter-spacing: .04em; margin-left: 6px; }
     .notif .nm { color: var(--ink-soft); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Threat alert sheet: slides up from the bottom, covering all but the top 20%.
+       Ivory glass tinted by severity; the caution sign and glow use the same tint. */
+    #threat { position: fixed; left: 0; right: 0; bottom: 0; height: 80vh; height: 80dvh; z-index: 20;
+              display: flex; flex-direction: column; align-items: center; text-align: center;
+              padding: 30px 24px calc(24px + env(safe-area-inset-bottom));
+              border-radius: 28px 28px 0 0; border: 1px solid rgba(255, 255, 255, .8); border-bottom: 0;
+              box-shadow: 0 -18px 60px rgba(21, 64, 48, .28), inset 0 1px 0 rgba(255, 255, 255, .9);
+              backdrop-filter: blur(26px) saturate(160%); -webkit-backdrop-filter: blur(26px) saturate(160%);
+              background: linear-gradient(180deg, rgba(var(--tint), .26), rgba(var(--tint), .10)), rgba(246, 243, 234, .96);
+              transform: translateY(105%); transition: transform .5s cubic-bezier(.25, .9, .3, 1); }
+    #threat.on { transform: translateY(0); }
+    #threat.low    { --tint: 217, 164, 15; }
+    #threat.medium { --tint: 224, 129, 42; }
+    #threat.high   { --tint: 217, 58, 66; }
+    #tSign { width: min(52vw, 230px); margin: 10px auto 20px; color: rgb(var(--tint));
+             filter: drop-shadow(0 10px 26px rgba(var(--tint), .45)); }
+    #threat.critical #tSign { animation: signPulse 1s infinite; }
+    @keyframes signPulse { 50% { transform: scale(1.06); filter: drop-shadow(0 10px 36px rgba(var(--tint), .7)); } }
+    #tKind { font-size: 30px; font-weight: 800; letter-spacing: -.01em; margin: 0 0 8px; }
+    #tKind .tag { color: #c01037; font-size: 18px; font-weight: 800; letter-spacing: .05em; margin-left: 8px; }
+    #tWhere { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+    #tWhy { font-size: 15px; color: var(--ink-soft); max-width: 36ch; margin: 0 auto 8px; }
+    #tBy { font-size: 13px; color: var(--ink-soft); }
+    #tClose { margin-top: auto; min-width: min(320px, 70vw); padding: 14px 22px; font-size: 18px; font-weight: 650;
+              border: 1px solid rgba(255, 255, 255, .5); border-radius: 14px; cursor: pointer; font-family: inherit; color: #fff;
+              background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
+              box-shadow: 0 8px 22px rgba(20, 157, 120, .38), inset 0 1px 0 rgba(255, 255, 255, .45);
+              opacity: 0; pointer-events: none; transition: opacity .4s; }
+    #tClose.show { opacity: 1; pointer-events: auto; }
 
     /* Success popup: slides in from the bottom with a bounce (overshooting bezier),
        drops back down with a plain ease. The checkmark's tail pokes out of the circle. */
@@ -153,15 +181,13 @@
         <div id="panels">
           <div class="panel" id="dashPanel">
             <h1 class="w">OverSite</h1>
-            <div id="alert"></div>
             <p id="status" class="muted"></p>
             <div id="map" class="map">
               <img id="plan" class="plan" src="/floorplan" alt="">
-              <div id="range" class="marker"></div>
               <div id="markers"></div>
               <div id="me" class="marker"></div>
             </div>
-            <button id="openReport" class="big">Report a hazard</button>
+            <button id="openReport" class="big">Report Hazard</button>
             <h2>Recent notifications</h2>
             <div id="notes"></div>
           </div>
@@ -194,7 +220,7 @@
 
       <section class="screen">
         <div class="scroll">
-          <div class="rhead"><button id="back" type="button" title="Back">←</button><h1>Report a hazard</h1></div>
+          <div class="rhead"><button id="back" type="button" title="Back">←</button><h1>Report Hazard</h1></div>
           <form id="rform">
             <div class="row">
               <div>
@@ -227,6 +253,19 @@
     </div>
   </div>
 
+  <div id="threat" role="alertdialog" aria-label="Threat alert">
+    <svg id="tSign" viewBox="0 0 100 88" aria-hidden="true">
+      <path d="M50 6 L95 82 H5 Z" fill="currentColor" stroke="currentColor" stroke-width="10" stroke-linejoin="round"/>
+      <rect x="44.5" y="30" width="11" height="28" rx="5.5" fill="#fff"/>
+      <circle cx="50" cy="70" r="6.5" fill="#fff"/>
+    </svg>
+    <div id="tKind"></div>
+    <div id="tWhere"></div>
+    <div id="tWhy"></div>
+    <div id="tBy"></div>
+    <button id="tClose" type="button">Close</button>
+  </div>
+
   <div id="popup" role="status">
     <h3>Report submitted!</h3>
     <svg width="64" height="56" viewBox="0 0 56 48" fill="none">
@@ -247,9 +286,8 @@
     };
     const place = (node, pos) => { node.style.left = `${pos.x * 100}%`; node.style.top = `${pos.y * 100}%`; };
 
-    const NEARBY = 0.2; // fraction of the map; threats closer than this count as "near you"
     let name = '', me = null, pos = null, audio = null, popupTimer = 0;
-    const alerted = new Set(); // "id" or "id:critical", so each threat alerts once (and again if it turns critical)
+    let seenThreats = null; // threat id -> was critical; primed on the first poll so old threats don't replay
 
     try { name = (localStorage.getItem('workerName') || '').trim(); } catch {}
     $('name').value = name;
@@ -291,10 +329,7 @@
       const r = $('map').getBoundingClientRect();
       me = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
       place($('me'), me);
-      place($('range'), me);
-      $('range').style.width = `${NEARBY * 2 * r.width}px`;
-      $('range').style.height = `${NEARBY * 2 * r.height}px`;
-      $('me').style.display = $('range').style.display = 'block';
+      $('me').style.display = 'block';
       statusUpdate();
       checkIn();
       poll();
@@ -315,8 +350,6 @@
 
     // Beep, buzz, and a system notification if allowed. Only works while this page is open.
     function alarm(text) {
-      $('alert').textContent = `⚠ ${text}`;
-      $('alert').className = 'on';
       navigator.vibrate?.([300, 150, 300]);
       if (audio && audio.state !== 'closed') {
         const osc = audio.createOscillator();
@@ -325,10 +358,30 @@
         osc.start();
         osc.stop(audio.currentTime + 0.4);
       }
-      try { if (Notification.permission === 'granted') new Notification('OverSite', { body: text }); } catch {}
+      try { if (Notification.permission === 'granted') new Notification('OverSite', { body: text, tag: 'oversite-threat' }); } catch {}
     }
 
-    const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    // The big severity-colored alert sheet.
+    let threatCloseTimer = 0;
+    function showThreat(t) {
+      const sheet = $('threat');
+      sheet.className = `on ${t.critical ? 'high critical' : t.severity}`;
+      const kind = el('div');
+      kind.textContent = label(t.kind);
+      if (t.critical) kind.append(el('span', 'tag', 'CRITICAL'));
+      $('tKind').replaceChildren(kind);
+      $('tWhere').textContent = t.location;
+      $('tWhy').textContent = t.reason;
+      $('tBy').textContent = `Detected by ${t.sources.join(', ')} · ${t.seconds}s ago`;
+      $('tClose').classList.remove('show');
+      clearTimeout(threatCloseTimer);
+      threatCloseTimer = setTimeout(() => $('tClose').classList.add('show'), 1000);
+    }
+    $('tClose').onclick = () => {
+      clearTimeout(threatCloseTimer);
+      $('tClose').classList.remove('show');
+      $('threat').classList.remove('on');
+    };
 
     function render({ threats, log }) {
       const dots = [];
@@ -341,14 +394,20 @@
       }
       $('markers').replaceChildren(...dots);
 
-      const near = me ? threats.filter(t => t.trail.length && distance(t.trail.at(-1), me) <= NEARBY) : [];
-      for (const t of near) {
-        const key = t.critical ? `${t.id}:critical` : `${t.id}`;
-        if (alerted.has(key)) continue;
-        alerted.add(key);
-        alarm(t.kind === 'person_down' ? 'Someone may need help nearby!' : `${label(t.kind)} near you: ${t.location}`);
+      // Any newly raised threat pops the alert sheet and push for every worker.
+      // A threat escalating to CRITICAL alerts again.
+      if (seenThreats === null) {
+        seenThreats = new Map(threats.map(t => [t.id, t.critical]));
+      } else {
+        for (const t of threats) {
+          const isNew = !seenThreats.has(t.id);
+          if (isNew || (t.critical && !seenThreats.get(t.id))) {
+            alarm(t.kind === 'person_down' ? 'Someone may need help!' : `${label(t.kind)}: ${t.location}`);
+            showThreat(t);
+          }
+        }
+        seenThreats = new Map(threats.map(t => [t.id, t.critical]));
       }
-      if (!near.length) $('alert').className = ''; // banner stays up while anything is near you
 
       // Last 10 detections from the shared event log (newest first).
       const rows = (log || []).filter(e => e.event === 'detected' || e.event === 'critical').slice(0, 10);
