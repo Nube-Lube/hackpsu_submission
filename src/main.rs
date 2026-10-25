@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -37,6 +37,7 @@ struct AppState {
     next_gemini_call: Mutex<Instant>,
     gemini_gap: Duration,
     kinds: Vec<String>, // hazard kinds from hazards.toml, offered on the worker report page
+    gmaps_key: Option<String>, // server-side Google Maps key for floor-plan snapshots
 }
 
 #[derive(Default)]
@@ -146,6 +147,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let rpm: u64 = std::env::var("GEMINI_RPM").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
+    // Google Maps key: env var or a gitignored key file holding only the raw key.
+    let gmaps_key = std::env::var("GMAPS_KEY")
+        .or_else(|_| std::fs::read_to_string(".env/gmaps_api.env"))
+        .ok()
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
+    if gmaps_key.is_none() {
+        println!("no Google Maps key: floor-plan alignment disabled (set GMAPS_KEY or .env/gmaps_api.env)");
+    }
     let has_server_key = vision.has_server_key();
     let state = Arc::new(AppState {
         vision,
@@ -157,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
         next_gemini_call: Mutex::new(Instant::now()),
         gemini_gap: Duration::from_millis(60_000 / rpm),
         kinds: config.kinds(),
+        gmaps_key,
     });
 
     // The board decays and escalates every second, even when no camera is sending.
@@ -171,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let app = Router::new()
-        .route("/", get(|| async { Html(include_str!("../static/dashboard.html")) }))
+        .route("/", get(landing))
         .route("/camera", get(|| async { Html(include_str!("../static/camera.html")) }))
         .route("/worker", get(|| async { Html(include_str!("../static/worker.html")) }))
         .route("/checkin", post(checkin))
@@ -180,6 +191,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/resolve", post(resolve))
         .route("/place", post(place))
         .route("/floorplan", get(floorplan))
+        .route("/sfx/{file}", get(sfx))
+        .route("/align", post(align))
+        .route("/bounds", get(bounds))
         .route("/state", get(overview))
         .route("/kinds", get(|State(s): State<Arc<AppState>>| async move { Json(s.kinds.clone()) }))
         .route("/frame", get(frame))
@@ -379,14 +393,100 @@ async fn place(State(state): State<Arc<AppState>>, Query(q): Query<PlaceQuery>) 
     }
 }
 
+// The dashboard carries a __GMAPS_KEY__ placeholder the server fills from its own key,
+// so the key never lands in the repository.
+async fn landing(State(state): State<Arc<AppState>>) -> Html<String> {
+    Html(include_str!("../static/dashboard.html").replace("__GMAPS_KEY__", state.gmaps_key.as_deref().unwrap_or("")))
+}
+
+// Where the manager last framed the site, so the aligner reopens there.
+async fn bounds() -> impl IntoResponse {
+    let text = tokio::fs::read_to_string("bounds.json").await.unwrap_or_else(|_| "{}".into());
+    ([(header::CONTENT_TYPE, "application/json"), (header::CACHE_CONTROL, "no-cache")], text).into_response()
+}
+
+// The manager framed the site on Google Maps; fetch exactly that frame as a satellite
+// snapshot (same Web-Mercator projection, so zoom + center + the frame's pixel size
+// cover the identical area) and make it the floor plan.
+async fn align(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<AlignQuery>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let key = state.gmaps_key.as_deref().ok_or_else(|| {
+        (StatusCode::BAD_REQUEST, "no Google Maps key on the server; set GMAPS_KEY or .env/gmaps_api.env".to_string())
+    })?;
+    let sane = q.lat.is_finite() && q.lat.abs() <= 90.0
+        && q.lng.is_finite() && q.lng.abs() <= 180.0
+        && (64..=1280).contains(&q.w) && (64..=1280).contains(&q.h)
+        && q.zoom <= 21;
+    if !sane {
+        return Err((StatusCode::BAD_REQUEST, "bad align parameters".into()));
+    }
+    let url = format!(
+        "https://maps.googleapis.com/maps/api/staticmap?center={},{}&zoom={}&size={}x{}&scale=2&maptype=satellite&key={}",
+        q.lat, q.lng, q.zoom, q.w, q.h, key
+    );
+    let resp = reqwest::get(&url).await.map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = resp.bytes().await.map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+    if !status.is_success() || !content_type.starts_with("image/") {
+        // Google answers with JSON/text on bad keys or quota errors.
+        let detail = String::from_utf8_lossy(&bytes[..bytes.len().min(300)]).to_string();
+        return Err((StatusCode::BAD_GATEWAY, format!("staticmap returned {status} ({content_type}): {detail}")));
+    }
+    tokio::fs::write("floorplan.png", &bytes)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let frame = serde_json::json!({ "lat": q.lat, "lng": q.lng, "zoom": q.zoom, "w": q.w, "h": q.h });
+    let _ = tokio::fs::write("bounds.json", frame.to_string()).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // Optional floor-plan image next to the server; the dashboard draws a plain grid without one.
 async fn floorplan() -> impl IntoResponse {
     for (file, mime) in [("floorplan.png", "image/png"), ("floorplan.jpg", "image/jpeg")] {
         if let Ok(bytes) = tokio::fs::read(file).await {
-            return ([(header::CONTENT_TYPE, mime)], bytes).into_response();
+            return (
+                [(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "no-cache")],
+                bytes,
+            )
+                .into_response();
         }
     }
     StatusCode::NOT_FOUND.into_response()
+}
+
+#[derive(Deserialize)]
+struct AlignQuery {
+    lat: f64,
+    lng: f64,
+    zoom: u8,
+    w: u16,
+    h: u16,
+}
+
+// Sound effects shipped in the sfx/ folder (warning, submitted); swap files without rebuilding.
+async fn sfx(Path(file): Path<String>) -> impl IntoResponse {
+    let safe = !file.starts_with('.')
+        && file.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    let mime = match file.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        _ => "application/octet-stream",
+    };
+    match safe {
+        true if let Ok(bytes) = tokio::fs::read(format!("sfx/{file}")).await => {
+            ([(header::CONTENT_TYPE, mime)], bytes).into_response()
+        }
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn overview(State(state): State<Arc<AppState>>) -> Json<Overview> {

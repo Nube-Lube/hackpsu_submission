@@ -61,7 +61,6 @@
   <main>
     <form id="setup">
       <input id="name" placeholder="Camera name, e.g. Loading Dock" maxlength="40" required>
-      <input id="key" type="password" placeholder="Your Gemini API key (optional)" autocomplete="off">
       <button>Start</button>
     </form>
     <div id="viewer">
@@ -79,15 +78,13 @@
     const list = document.getElementById('hazards');
     const setup = document.getElementById('setup');
     const nameInput = document.getElementById('name');
-    const keyInput = document.getElementById('key');
     const rotate = document.getElementById('rotate');
-    const label = kind => kind.replaceAll('_', ' ');
+    const ACRONYMS = { ppe: 'PPE' }; // kinds shown in full caps
+    const label = kind => kind.split('_').map(w => ACRONYMS[w] ?? w[0].toUpperCase() + w.slice(1)).join(' ');
 
     // Remember the name per device; ?name=... in the URL overrides it.
     try { nameInput.value = new URLSearchParams(location.search).get('name') || localStorage.getItem('cameraName') || ''; } catch {}
-    // BYOK: an optional personal Gemini key, kept only in this browser and sent with each frame.
-    try { keyInput.value = localStorage.getItem('geminiKey') || ''; } catch {}
-    let cameraName = '', geminiKey = '';
+    let cameraName = '';
 
     // Grab the current video frame as JPEG bytes, longest side at most 1024 px (phones shoot 4K).
     function snapshot() {
@@ -157,7 +154,6 @@
           const res = await fetch(`/analyze?camera=${encodeURIComponent(cameraName)}`, {
             method: 'POST',
             body: wantGemini ? await snapshot() : '',
-            headers: geminiKey ? { 'X-Gemini-Key': geminiKey } : {},
           });
           if (!res.ok) throw new Error(await res.text());
           const analysis = await res.json();
@@ -169,7 +165,7 @@
           }
           const what = portrait ? 'paused: turn sideways' : analysis.checked ? 'checked with Gemini'
             : wantGemini ? 'waiting for a Gemini slot' : 'scene unchanged';
-          status.textContent = `${cameraName} · ${what} · ${geminiCalls} Gemini calls (${geminiKey ? 'your key' : 'shared key'})`;
+          status.textContent = `${cameraName} · ${what} · ${geminiCalls} Gemini calls`;
         } catch (e) {
           if (wantGemini) lastSent = performance.now(); // don't hammer the API after an error
           status.textContent = `check failed, retrying: ${e.message}`;
@@ -182,8 +178,7 @@
     setup.addEventListener('submit', async e => {
       e.preventDefault();
       cameraName = nameInput.value.trim();
-      geminiKey = keyInput.value.trim();
-      try { localStorage.setItem('cameraName', cameraName); localStorage.setItem('geminiKey', geminiKey); } catch {}
+      try { localStorage.setItem('cameraName', cameraName); } catch {}
       try {
         // Ask for 720p so cheap webcams don't fall back to 640x480; the browser picks the closest it has.
         video.srcObject = await navigator.mediaDevices.getUserMedia({

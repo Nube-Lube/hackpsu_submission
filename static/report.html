@@ -93,7 +93,8 @@
   </main>
   <script>
     const $ = id => document.getElementById(id);
-    const label = kind => kind.replaceAll('_', ' ');
+    const ACRONYMS = { ppe: 'PPE' }; // kinds shown in full caps
+    const label = kind => kind.split('_').map(w => ACRONYMS[w] ?? w[0].toUpperCase() + w.slice(1)).join(' ');
 
     try { $('name').value = localStorage.getItem('workerName') || ''; } catch {}
 
@@ -116,6 +117,10 @@
       const r = $('map').getBoundingClientRect();
       setPin({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
     });
+
+    // Sound effect played once a report goes through.
+    const submittedSound = new Audio('/sfx/submitted.mp3');
+    submittedSound.preload = 'auto';
 
     // Hazard kinds come from the server's hazards.toml.
     fetch('/kinds').then(r => r.json()).then(kinds => {
@@ -141,6 +146,7 @@
           }),
         });
         if (!res.ok) throw new Error(await res.text());
+        try { submittedSound.currentTime = 0; submittedSound.play().catch(() => {}); } catch {}
         $('result').className = 'ok';
         $('result').textContent = 'Reported. It is on the dashboard now.';
         $('location').value = '';

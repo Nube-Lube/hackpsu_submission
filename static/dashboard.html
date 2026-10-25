@@ -20,8 +20,9 @@
       --line: rgba(29, 42, 37, .12);
       --shadow: 0 8px 30px rgba(21, 64, 48, .12);
     }
+    * { box-sizing: border-box; }
     body { margin: 0; font-family: "Plus Jakarta Sans", -apple-system, "SF Pro Text", system-ui, sans-serif;
-           color: var(--ink); background: var(--ivory); }
+           color: var(--ink); background: var(--ivory); overflow: hidden; overscroll-behavior: none; }
     /* Liquid-glass backdrop: soft jade and ivory light that the glass panels blur. */
     body::before { content: ""; position: fixed; inset: 0; z-index: -1;
       background:
@@ -42,6 +43,21 @@
     h2 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); margin: 0 0 10px; }
     section + section { margin-top: 22px; }
     .muted { color: var(--ink-soft); font-size: 12.5px; }
+
+    /* Two full-height screens in a deck: the dashboard and the report form.
+       Sliding the deck up by half its height brings the report into view. */
+    #viewport { height: 100vh; height: 100dvh; overflow: hidden; }
+    #deck { height: 200vh; height: 200dvh; transition: transform .5s cubic-bezier(.25, .9, .3, 1); }
+    #deck.report { transform: translateY(-50%); }
+    .screen { height: 50%; display: flex; flex-direction: column; overflow: hidden; }
+    .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+    #banner { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 15; padding: 14px 16px;
+              color: #fff; font-weight: 700; font-size: 20px;
+              background: rgba(219, 45, 57, .92); border-bottom: 1px solid rgba(255, 255, 255, .35);
+              backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    #banner.on { display: block; animation: pulse 1s infinite alternate; }
+    @keyframes pulse { to { background-color: rgba(154, 18, 30, .92); } }
 
     /* Site map: positions are fractions (0..1) of the map's width and height. */
     #map { position: relative; aspect-ratio: 16 / 10; border-radius: 20px; overflow: hidden; touch-action: none;
@@ -87,53 +103,191 @@
                      font-family: inherit; color: #fff; font-weight: 650;
                      background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
                      box-shadow: 0 4px 12px rgba(20, 157, 120, .3), inset 0 1px 0 rgba(255, 255, 255, .45); }
-    #banner { display: none; padding: 14px 16px; color: #fff; font-weight: 700; font-size: 20px;
-              background: rgba(219, 45, 57, .92); border-bottom: 1px solid rgba(255, 255, 255, .35);
-              backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-    #banner.on { display: block; animation: pulse 1s infinite alternate; }
-    @keyframes pulse { to { background-color: rgba(154, 18, 30, .92); } }
-    #log div { font-size: 13px; color: var(--ink-soft); padding: 5px 0; border-bottom: 1px solid rgba(29, 42, 37, .08); }
     @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+
+    /* Google Maps alignment: frame the site once, snapshot it as the floor plan. */
+    #alignBtn { margin-top: 10px; padding: 10px 18px; border-radius: 12px; cursor: pointer; font-family: inherit;
+                font-size: 14px; font-weight: 650; color: var(--jade-ink);
+                border: 1px solid rgba(20, 157, 120, .35); background: rgba(20, 157, 120, .14); }
+    #alignWrap { position: fixed; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center;
+                 padding: 20px; background: rgba(20, 32, 28, .45);
+                 backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    #alignCard { width: min(880px, 100%); background: rgba(246, 243, 234, .97); border: 1px solid rgba(255, 255, 255, .8);
+                 border-radius: 20px; padding: 20px; box-shadow: 0 24px 70px rgba(21, 64, 48, .35); }
+    #alignCard h2 { margin: 0 0 4px; }
+    #gmap { position: relative; width: 100%; height: min(58vh, 500px); border-radius: 14px; overflow: hidden;
+            background: #dcd9cf; margin-top: 12px; }
+    /* The frame is fixed and centered: its area is what becomes the site map. */
+    #alignRect { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+                 width: min(640px, calc(100% - 32px)); aspect-ratio: 16 / 10;
+                 border: 3px dashed #fff; outline: 2px solid rgba(0, 0, 0, .55); border-radius: 4px;
+                 pointer-events: none; box-shadow: 0 0 0 9999px rgba(10, 20, 16, .35); }
+    #alignRect::after { content: "This frame becomes the site map"; position: absolute; top: 10px; left: 50%;
+                        transform: translateX(-50%); background: rgba(0, 0, 0, .65); color: #fff;
+                        font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
+    #alignBar { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 14px; }
+    #alignErr { flex: 1; color: #c01037; font-size: 13px; margin-right: 10px; }
+    #alignCancel { padding: 10px 18px; border-radius: 12px; cursor: pointer; font-family: inherit; font-size: 14px;
+                   font-weight: 650; color: var(--ink-soft); border: 1px solid var(--line); background: var(--glass); }
+    #alignSave { padding: 10px 22px; border-radius: 12px; cursor: pointer; font-family: inherit; font-size: 14px;
+                 font-weight: 650; color: #fff; border: 1px solid rgba(255, 255, 255, .5);
+                 background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
+                 box-shadow: 0 4px 12px rgba(20, 157, 120, .3); }
+    #alignSave:disabled { opacity: .5; }
+
+    /* Embedded report screen (slides up from below the dashboard). */
+    #rformWrap { max-width: 720px; margin: 0 auto; padding: 16px; }
+    .rhead { display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; }
+    .rhead::after { content: ""; flex: none; width: 44px; } /* keeps the title truly centered */
+    .rhead h1 { flex: 1; min-width: 0; text-align: center; font-size: 37px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
+    #back { flex: none; width: 44px; height: 38px; border-radius: 12px; cursor: pointer;
+            border: 1px solid rgba(20, 157, 120, .25); background: rgba(20, 157, 120, .14); color: var(--jade-ink);
+            font-size: 22px; line-height: 1; display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 4px 12px rgba(21, 64, 48, .10); }
+    #back:active { transform: scale(.92); }
+    #rform label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+    #rform input, #rform select, #rform textarea { width: 100%; padding: 12px 14px; font-size: 16px; border-radius: 12px;
+              border: 1px solid var(--line); background: var(--glass); color: var(--ink); font-family: inherit;
+              backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+              box-shadow: inset 0 1px 2px rgba(29, 42, 37, .05); }
+    #rform input:focus, #rform select:focus, #rform textarea:focus { outline: none; border-color: var(--jade); box-shadow: 0 0 0 3px rgba(20, 157, 120, .18); }
+    #rform textarea { min-height: 84px; }
+    #rform .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    #rmap { position: relative; aspect-ratio: 16 / 10; border-radius: 18px; overflow: hidden; cursor: crosshair;
+            background-color: rgba(255, 255, 255, .45);
+            background-image: linear-gradient(rgba(20, 157, 120, .10) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 157, 120, .10) 1px, transparent 1px);
+            background-size: 10% 10%;
+            border: 1px solid rgba(255, 255, 255, .7); box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .8);
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    #rplan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    #rpin { position: absolute; display: none; width: 20px; height: 20px; border-radius: 50%; background: var(--jade);
+            border: 2px solid #fff; transform: translate(-50%, -50%); box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
+    #send { width: 100%; margin-top: 20px; padding: 14px; font-size: 18px; font-weight: 650; border-radius: 14px; cursor: pointer;
+            font-family: inherit; color: #fff; border: 1px solid rgba(255, 255, 255, .5);
+            background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
+            box-shadow: 0 8px 22px rgba(20, 157, 120, .38), inset 0 1px 0 rgba(255, 255, 255, .45); }
+    #send:disabled { opacity: .5; }
+    #rerr { color: #c01037; font-size: 14px; margin-top: 10px; }
+
+    /* Success popup: slides in from the bottom with a bounce; the checkmark pokes out of the circle. */
+    #popup { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 140%);
+             transition: transform .35s ease-in;
+             background: rgba(255, 255, 255, .75); backdrop-filter: blur(24px) saturate(170%); -webkit-backdrop-filter: blur(24px) saturate(170%);
+             border: 1px solid rgba(255, 255, 255, .8); border-radius: 22px; padding: 18px 30px 16px; text-align: center;
+             box-shadow: 0 18px 50px rgba(21, 64, 48, .22), inset 0 1px 0 rgba(255, 255, 255, .9); z-index: 30; cursor: pointer;
+             max-width: calc(100vw - 32px); }
+    #popup.on { transform: translate(-50%, 0); transition: transform .55s cubic-bezier(.34, 1.56, .64, 1); }
+    #popup h3 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+    #popup svg { display: block; margin: 10px auto 12px; }
+    #popup p { margin: 0; color: var(--ink-soft); font-size: 13px; }
   </style>
 </head>
 <body>
-  <div id="banner"></div>
-  <header>
-    <h1>OverSite</h1>
-    <nav><a href="/worker">Worker app</a><a href="/report">Report a hazard</a><a href="/camera">Use this device as a camera</a></nav>
-  </header>
-  <main>
-    <div>
-      <section>
-        <h2>Site map</h2>
-        <div id="map">
-          <img id="plan" src="/floorplan" alt="">
-          <svg id="trails" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
-          <div id="markers"></div>
+  <div id="viewport">
+    <div id="deck">
+      <section class="screen">
+        <div class="scroll">
+          <div id="banner"></div>
+          <header>
+            <h1>OverSite</h1>
+            <nav><a href="/worker">Worker app</a><a href="/report" id="navReport">Report a Hazard</a><a href="/camera">Use this device as a camera</a></nav>
+          </header>
+          <main>
+            <div>
+              <section>
+                <h2>Site map</h2>
+                <div id="map">
+                  <img id="plan" src="/floorplan" alt="">
+                  <svg id="trails" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
+                  <div id="markers"></div>
+                </div>
+                <div id="tray"></div>
+                <button id="alignBtn" type="button">Align with Google Maps</button>
+                <p class="muted">Drag cameras onto the map where they are, or align with Google Maps to snapshot the site.</p>
+              </section>
+              <section>
+                <h2>Cameras</h2>
+                <div id="cameras"></div>
+                <p id="no-cameras" class="muted">No cameras yet. Open <a href="/camera">/camera</a> on a phone or laptop.</p>
+              </section>
+            </div>
+            <div>
+              <section>
+                <h2>Threat board</h2>
+                <div id="threats"></div>
+              </section>
+            </div>
+          </main>
         </div>
-        <div id="tray"></div>
-        <p class="muted">Drag cameras onto the map where they are. Add a floorplan.png next to the server to use a real floor plan.</p>
       </section>
-      <section>
-        <h2>Cameras</h2>
-        <div id="cameras"></div>
-        <p id="no-cameras" class="muted">No cameras yet. Open <a href="/camera">/camera</a> on a phone or laptop.</p>
+
+      <section class="screen">
+        <div class="scroll">
+          <div id="rformWrap">
+            <div class="rhead"><button id="back" type="button" title="Back">←</button><h1>Report Hazard</h1></div>
+            <form id="rform">
+              <label for="rname">Your name</label>
+              <input id="rname" maxlength="40" placeholder="Optional">
+              <div class="row">
+                <div>
+                  <label for="kind">What is it?</label>
+                  <select id="kind" required></select>
+                </div>
+                <div>
+                  <label for="severity">Severity?</label>
+                  <select id="severity">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+              </div>
+              <label for="location">Where?</label>
+              <input id="location" maxlength="200" placeholder="e.g. bay 3, by the loading door" required>
+              <label>Tap the map where it is (optional)</label>
+              <div id="rmap">
+                <img id="rplan" src="/floorplan" alt="">
+                <div id="rpin"></div>
+              </div>
+              <label for="note">Details</label>
+              <textarea id="note" maxlength="500" placeholder="What did you see?"></textarea>
+              <button id="send" type="submit">Send report</button>
+              <div id="rerr"></div>
+            </form>
+          </div>
+        </div>
       </section>
     </div>
-    <div>
-      <section>
-        <h2>Threat board</h2>
-        <div id="threats"></div>
-      </section>
-      <section>
-        <h2>Event log</h2>
-        <div id="log"></div>
-      </section>
+  </div>
+
+  <div id="alignWrap" hidden>
+    <div id="alignCard">
+      <h2>Align the site map</h2>
+      <p class="muted">Drag and zoom until the frame covers the construction site, then use this area. A satellite snapshot of exactly the frame becomes the site map everywhere.</p>
+      <div id="gmap">
+        <div id="alignRect"></div>
+      </div>
+      <div id="alignBar">
+        <span id="alignErr"></span>
+        <button id="alignCancel" type="button">Cancel</button>
+        <button id="alignSave" type="button">Use this area</button>
+      </div>
     </div>
-  </main>
+  </div>
+
+  <div id="popup" role="status">
+    <h3>Report submitted!</h3>
+    <svg width="64" height="56" viewBox="0 0 56 48" fill="none">
+      <circle cx="22" cy="27" r="15" stroke="#149d78" stroke-width="3"/>
+      <path d="M13 26 L20 33 L42 14" stroke="#149d78" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <p>Thanks for keeping the worksite safe.</p>
+  </div>
+
   <script>
     const $ = id => document.getElementById(id);
-    const label = kind => kind.replaceAll('_', ' ');
+    const ACRONYMS = { ppe: 'PPE' }; // kinds shown in full caps
+    const label = kind => kind.split('_').map(w => ACRONYMS[w] ?? w[0].toUpperCase() + w.slice(1)).join(' ');
     const el = (tag, className, text) => {
       const e = document.createElement(tag);
       if (className) e.className = className;
@@ -143,10 +297,13 @@
     const place = (node, pos) => { node.style.left = `${pos.x * 100}%`; node.style.top = `${pos.y * 100}%`; };
 
     // Use the floor plan's own shape so map positions line up with the picture.
-    $('plan').onload = () => {
-      $('map').style.aspectRatio = `${$('plan').naturalWidth} / ${$('plan').naturalHeight}`;
-      $('plan').style.display = 'block';
+    const adoptPlan = img => img.onload = () => {
+      const map = img.parentElement;
+      map.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+      img.style.display = 'block';
     };
+    adoptPlan($('plan'));
+    adoptPlan($('rplan'));
 
     // Dragging a camera chip onto the map saves its position on the server.
     let dragging = false;
@@ -260,7 +417,7 @@
       return card;
     }
 
-    function render({ cameras, threats, workers, log }) {
+    function render({ cameras, threats, workers }) {
       renderMap(cameras, threats, workers);
       $('no-cameras').hidden = cameras.length > 0;
       cameras.forEach(renderCamera);
@@ -270,12 +427,6 @@
       const critical = threats.filter(t => t.critical).map(t => `${label(t.kind)} (${t.sources.at(-1)})`);
       $('banner').className = critical.length ? 'on' : '';
       $('banner').textContent = critical.length ? `⚠ CRITICAL: ${critical.join(' · ').toUpperCase()}` : '';
-
-      $('log').replaceChildren(...log.map(e => {
-        const what = e.event === 'resolved' ? (e.by === 'faded' ? 'FADED' : 'RESOLVED') : e.event.toUpperCase();
-        return el('div', '', `${new Date(e.at_ms).toLocaleTimeString()}  ${e.source}  ${what}  ${label(e.kind)}` +
-          (e.reason ? ` — ${e.reason}` : ''));
-      }));
     }
 
     async function poll() {
@@ -286,6 +437,118 @@
     }
     poll();
     setInterval(poll, 1000);
+
+    // ---- Report screen (slides in from below the dashboard) ----
+    let pos = null, popupTimer = 0;
+    try { $('rname').value = localStorage.getItem('workerName') || ''; } catch {}
+    function setPin() {
+      $('rpin').style.display = pos ? 'block' : 'none';
+      if (pos) place($('rpin'), pos);
+    }
+    $('rmap').addEventListener('click', e => {
+      const r = $('rmap').getBoundingClientRect();
+      pos = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+      setPin();
+    });
+    $('navReport').addEventListener('click', e => {
+      e.preventDefault();
+      $('location').value = '';
+      $('note').value = '';
+      $('rerr').textContent = '';
+      pos = null;
+      setPin();
+      $('deck').classList.add('report');
+    });
+    $('back').onclick = () => $('deck').classList.remove('report');
+
+    fetch('/kinds').then(r => r.json()).then(kinds => {
+      for (const k of kinds) {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.textContent = label(k);
+        $('kind').appendChild(opt);
+      }
+    });
+
+    $('rform').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('send').disabled = true;
+      try {
+        const name = $('rname').value.trim();
+        try { localStorage.setItem('workerName', name); } catch {}
+        const res = await fetch('/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name, kind: $('kind').value, severity: $('severity').value,
+            location: $('location').value, note: $('note').value, pos,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        $('deck').classList.remove('report');
+        poll();
+        clearTimeout(popupTimer);
+        popupTimer = setTimeout(() => {
+          $('popup').classList.add('on');
+          popupTimer = setTimeout(() => $('popup').classList.remove('on'), 3000);
+        }, 400);
+      } catch (err) {
+        $('rerr').textContent = `Could not send: ${err.message}`;
+      }
+      $('send').disabled = false;
+    });
+    $('popup').onclick = () => { clearTimeout(popupTimer); $('popup').classList.remove('on'); };
+
+    // ---- Google Maps alignment: frame the site, snapshot it as the floor plan ----
+    let gmap = null;
+    const GMAPS_KEY = "__GMAPS_KEY__"; // filled in by the server from its own key
+    $('alignBtn').onclick = async () => {
+      $('alignErr').textContent = '';
+      $('alignWrap').hidden = false;
+      if (!gmap) await loadGmaps();
+    };
+    $('alignCancel').onclick = () => { $('alignWrap').hidden = true; };
+    function loadGmaps() {
+      return new Promise(resolve => {
+        if (!GMAPS_KEY) {
+          $('alignErr').textContent = 'No Google Maps key on the server — set GMAPS_KEY or put the raw key in .env/gmaps_api.env and restart.';
+          return resolve();
+        }
+        window.gm_authFailure = () => { $('alignErr').textContent = 'Google rejected the Maps key (check restrictions/quota).'; };
+        const s = document.createElement('script');
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GMAPS_KEY)}`;
+        s.onload = async () => {
+          let center = { lat: 40.7952, lng: -77.8658 }, zoom = 18; // default: Penn State campus
+          try {
+            const b = await (await fetch('/bounds')).json();
+            if (Number.isFinite(b.lat)) { center = { lat: b.lat, lng: b.lng }; zoom = b.zoom || 18; }
+          } catch {}
+          gmap = new google.maps.Map($('gmap'), {
+            center, zoom, mapTypeId: 'satellite', tilt: 0,
+            mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+          });
+          resolve();
+        };
+        s.onerror = () => { $('alignErr').textContent = 'Could not load Google Maps (offline?).'; resolve(); };
+        document.head.appendChild(s);
+      });
+    }
+    $('alignSave').onclick = async () => {
+      if (!gmap) return;
+      const c = gmap.getCenter();
+      const r = $('alignRect').getBoundingClientRect();
+      $('alignSave').disabled = true;
+      try {
+        // Same projection + zoom + center + frame size = the snapshot covers exactly the frame.
+        const res = await fetch(`/align?lat=${c.lat()}&lng=${c.lng()}&zoom=${Math.round(gmap.getZoom())}&w=${Math.round(r.width)}&h=${Math.round(r.height)}`, { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        $('alignWrap').hidden = true;
+        $('plan').src = `/floorplan?v=${Date.now()}`; // onload swaps the grid for the snapshot
+      } catch (e) {
+        $('alignErr').textContent = `Could not save: ${e.message}`;
+      }
+      $('alignSave').disabled = false;
+    };
   </script>
 </body>
 </html>

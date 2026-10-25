@@ -132,27 +132,29 @@
 
     /* Threat alert sheet: slides up from the bottom, covering all but the top 20%.
        Ivory glass tinted by severity; the caution sign and glow use the same tint. */
-    #threat { position: fixed; left: 0; right: 0; bottom: 0; height: 80vh; height: 80dvh; z-index: 20;
+    #threat { position: fixed; left: 0; right: 0; bottom: 0; height: 88vh; height: 88dvh; z-index: 20;
               display: flex; flex-direction: column; align-items: center; text-align: center;
-              padding: 30px 24px calc(24px + env(safe-area-inset-bottom));
+              padding: 34px 24px calc(24px + env(safe-area-inset-bottom));
+              overflow-y: auto; scrollbar-width: none;
               border-radius: 28px 28px 0 0; border: 1px solid rgba(255, 255, 255, .8); border-bottom: 0;
               box-shadow: 0 -18px 60px rgba(21, 64, 48, .28), inset 0 1px 0 rgba(255, 255, 255, .9);
               backdrop-filter: blur(26px) saturate(160%); -webkit-backdrop-filter: blur(26px) saturate(160%);
               background: linear-gradient(180deg, rgba(var(--tint), .26), rgba(var(--tint), .10)), rgba(246, 243, 234, .96);
               transform: translateY(105%); transition: transform .5s cubic-bezier(.25, .9, .3, 1); }
+    #threat::-webkit-scrollbar { display: none; }
     #threat.on { transform: translateY(0); }
     #threat.low    { --tint: 217, 164, 15; }
     #threat.medium { --tint: 224, 129, 42; }
     #threat.high   { --tint: 217, 58, 66; }
-    #tSign { width: min(52vw, 230px); margin: 10px auto 20px; color: rgb(var(--tint));
-             filter: drop-shadow(0 10px 26px rgba(var(--tint), .45)); }
+    #tSign { width: min(58vw, 270px); margin: 10px auto 22px; color: rgb(var(--tint));
+             filter: drop-shadow(0 10px 26px rgba(var(--tint), .45)); flex: none; }
     #threat.critical #tSign { animation: signPulse 1s infinite; }
     @keyframes signPulse { 50% { transform: scale(1.06); filter: drop-shadow(0 10px 36px rgba(var(--tint), .7)); } }
-    #tKind { font-size: 30px; font-weight: 800; letter-spacing: -.01em; margin: 0 0 8px; }
-    #tKind .tag { color: #c01037; font-size: 18px; font-weight: 800; letter-spacing: .05em; margin-left: 8px; }
-    #tWhere { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
-    #tWhy { font-size: 15px; color: var(--ink-soft); max-width: 36ch; margin: 0 auto 8px; }
-    #tBy { font-size: 13px; color: var(--ink-soft); }
+    #tKind { font-size: 45px; font-weight: 800; letter-spacing: -.01em; margin: 0 0 10px; }
+    #tKind .tag { color: #c01037; font-size: 27px; font-weight: 800; letter-spacing: .05em; margin-left: 12px; }
+    #tWhere { font-size: 27px; font-weight: 700; margin-bottom: 8px; }
+    #tWhy { font-size: 22.5px; color: var(--ink-soft); max-width: 30ch; margin: 0 auto 10px; }
+    #tBy { font-size: 19.5px; color: var(--ink-soft); }
     #tClose { margin-top: auto; min-width: min(320px, 70vw); padding: 14px 22px; font-size: 18px; font-weight: 650;
               border: 1px solid rgba(255, 255, 255, .5); border-radius: 14px; cursor: pointer; font-family: inherit; color: #fff;
               background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
@@ -199,6 +201,9 @@
               <button class="big">Save</button>
             </form>
             <p id="nameMsg" class="muted" style="margin-top: 14px">Shown on the dashboard when you check in.</p>
+            <h2>Notifications</h2>
+            <button id="pushBtn" class="big" type="button">Enable push notifications</button>
+            <p id="pushMsg" class="muted" style="margin-top: 14px"></p>
           </div>
         </div>
         <nav class="tabbar">
@@ -277,7 +282,8 @@
 
   <script>
     const $ = id => document.getElementById(id);
-    const label = kind => kind.replaceAll('_', ' ');
+    const ACRONYMS = { ppe: 'PPE' }; // kinds shown in full caps
+    const label = kind => kind.split('_').map(w => ACRONYMS[w] ?? w[0].toUpperCase() + w.slice(1)).join(' ');
     const el = (tag, className, text) => {
       const e = document.createElement(tag);
       if (className) e.className = className;
@@ -286,8 +292,13 @@
     };
     const place = (node, pos) => { node.style.left = `${pos.x * 100}%`; node.style.top = `${pos.y * 100}%`; };
 
-    let name = '', me = null, pos = null, audio = null, popupTimer = 0;
+    let name = '', me = null, pos = null, popupTimer = 0;
     let seenThreats = null; // threat id -> was critical; primed on the first poll so old threats don't replay
+
+    // Sound effects from the server's sfx/ folder.
+    const warningSound = new Audio('/sfx/warning.mp3');
+    const submittedSound = new Audio('/sfx/submitted.mp3');
+    warningSound.preload = submittedSound.preload = 'auto';
 
     try { name = (localStorage.getItem('workerName') || '').trim(); } catch {}
     $('name').value = name;
@@ -305,6 +316,30 @@
         : 'Location set. Tap again if you move.';
     }
     statusUpdate();
+
+    // Push notifications: the Account button asks (or re-asks) and reports the state.
+    function pushStatus() {
+      if (!('Notification' in window)) {
+        $('pushMsg').textContent = 'Not supported on this device/browser.';
+        $('pushBtn').disabled = true;
+        return;
+      }
+      const p = Notification.permission;
+      if (p === 'granted') {
+        $('pushBtn').textContent = 'Push notifications on ✓';
+        $('pushBtn').disabled = true;
+        $('pushMsg').textContent = 'Alerts will pop up on this device.';
+      } else if (p === 'denied') {
+        $('pushMsg').textContent = 'Blocked. On iPhone: Settings › Notifications › OverSite › Allow Notifications, then reopen the app. On desktop: re-allow it in the site permissions.';
+      } else {
+        $('pushMsg').textContent = 'Tap the button, then choose Allow in the prompt.';
+      }
+    }
+    $('pushBtn').onclick = async () => {
+      try { await Notification.requestPermission(); } catch {}
+      pushStatus();
+    };
+    pushStatus();
 
     // Tabs slide the panel track sideways.
     function showTab(which) {
@@ -341,23 +376,15 @@
       }
     }
 
-    // Sound and notifications need one user gesture; the app auto-starts, so take the first tap.
-    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
+    // Notifications need one user gesture; the app auto-starts, so take the first tap.
     addEventListener('pointerdown', () => {
-      audio?.resume?.();
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
     }, { once: true });
 
-    // Beep, buzz, and a system notification if allowed. Only works while this page is open.
+    // Buzz, warn audibly, and send a system notification if allowed. Only works while this page is open.
     function alarm(text) {
       navigator.vibrate?.([300, 150, 300]);
-      if (audio && audio.state !== 'closed') {
-        const osc = audio.createOscillator();
-        osc.frequency.value = 880;
-        osc.connect(audio.destination);
-        osc.start();
-        osc.stop(audio.currentTime + 0.4);
-      }
+      try { warningSound.currentTime = 0; warningSound.play().catch(() => {}); } catch {}
       try { if (Notification.permission === 'granted') new Notification('OverSite', { body: text, tag: 'oversite-threat' }); } catch {}
     }
 
@@ -394,14 +421,16 @@
       }
       $('markers').replaceChildren(...dots);
 
-      // Any newly raised threat pops the alert sheet and push for every worker.
+      // Any newly raised threat pops the alert sheet and push for every worker,
+      // except the one who reported it themselves (they already know).
       // A threat escalating to CRITICAL alerts again.
       if (seenThreats === null) {
         seenThreats = new Map(threats.map(t => [t.id, t.critical]));
       } else {
+        const mySource = `worker: ${name || 'anonymous'}`;
         for (const t of threats) {
           const isNew = !seenThreats.has(t.id);
-          if (isNew || (t.critical && !seenThreats.get(t.id))) {
+          if ((isNew || (t.critical && !seenThreats.get(t.id))) && !t.sources.includes(mySource)) {
             alarm(t.kind === 'person_down' ? 'Someone may need help!' : `${label(t.kind)}: ${t.location}`);
             showThreat(t);
           }
@@ -472,6 +501,7 @@
         clearTimeout(popupTimer);
         popupTimer = setTimeout(() => {
           $('popup').classList.add('on');
+          try { submittedSound.currentTime = 0; submittedSound.play().catch(() => {}); } catch {}
           popupTimer = setTimeout(() => $('popup').classList.remove('on'), 3000);
         }, 400);
       } catch (err) {
