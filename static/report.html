@@ -55,7 +55,7 @@
            background-size: 10% 10%;
            border: 1px solid rgba(255, 255, 255, .7); box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .8);
            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-    #plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    #plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; object-fit: cover; }
     #pin { position: absolute; display: none; width: 18px; height: 18px; border-radius: 50%; background: var(--jade);
            border: 2px solid #fff; transform: translate(-50%, -50%); box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
   </style>
@@ -109,10 +109,7 @@
     // The worker app links here with ?x=..&y=.. so the pin starts where the worker is.
     const params = new URLSearchParams(location.search);
     if (params.has('x') && params.has('y')) setPin({ x: +params.get('x'), y: +params.get('y') });
-    $('plan').onload = () => {
-      $('map').style.aspectRatio = `${$('plan').naturalWidth} / ${$('plan').naturalHeight}`;
-      $('plan').style.display = 'block';
-    };
+    $('plan').onload = () => $('plan').style.display = 'block';
     $('map').addEventListener('click', e => {
       const r = $('map').getBoundingClientRect();
       setPin({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });

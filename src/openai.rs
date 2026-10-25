@@ -18,12 +18,16 @@ pub struct OpenAi {
 
 impl OpenAi {
     pub fn from_env(config: &Config) -> Result<Self> {
-        let base = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "http://localhost:11434/v1".into());
+        let vars = crate::config::env_file(".env/openai.env");
+        let get = |name: &str| {
+            std::env::var(name).ok().filter(|v| !v.is_empty()).or_else(|| vars.get(name).cloned())
+        };
+        let base = get("OPENAI_BASE_URL").unwrap_or_else(|| "http://localhost:11434/v1".into());
         Ok(Self {
             http: reqwest::Client::new(),
             url: format!("{}/chat/completions", base.trim_end_matches('/')),
-            model: std::env::var("OPENAI_MODEL").context("set OPENAI_MODEL to a vision model, e.g. qwen2.5vl:7b")?,
-            api_key: std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty()),
+            model: get("OPENAI_MODEL").context("set OPENAI_MODEL to a vision model, e.g. qwen2.5vl:7b")?,
+            api_key: get("OPENAI_API_KEY"),
             // Not every local model honors response_format, so also ask for JSON in words.
             prompt: format!("{}\n\nRespond with JSON only, matching the given schema.", config.prompt()),
             kinds: config.kinds(),

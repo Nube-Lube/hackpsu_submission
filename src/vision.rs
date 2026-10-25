@@ -13,8 +13,13 @@ pub enum Vision {
 
 impl Vision {
     pub fn from_env(config: &Config) -> Result<Self> {
-        let vision = match std::env::var("LLM_PROVIDER").as_deref() {
-            Ok("openai") => Vision::OpenAi(OpenAi::from_env(config)?),
+        // LLM_PROVIDER=openai switches to an OpenAI-compatible server (env var or .env/openai.env).
+        let provider = std::env::var("LLM_PROVIDER")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| crate::config::env_file(".env/openai.env").get("LLM_PROVIDER").cloned());
+        let vision = match provider.as_deref() {
+            Some("openai") => Vision::OpenAi(OpenAi::from_env(config)?),
             _ => Vision::Gemini(Gemini::new(config)?),
         };
         match &vision {
