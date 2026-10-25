@@ -6,6 +6,24 @@ use serde::Deserialize;
 
 const DEFAULT: &str = include_str!("../hazards.toml");
 
+/// Optional KEY=VALUE overrides from the gitignored `.env/openai.env`, so the
+/// local-inference setup survives restarts without re-exporting shell variables.
+/// Real environment variables win over the file.
+pub fn env_file(path: &str) -> HashMap<String, String> {
+    std::fs::read_to_string(path)
+        .map(|text| {
+            text.lines()
+                .filter_map(|line| {
+                    let line = line.trim();
+                    line.split_once('=')
+                        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                        .filter(|(k, _)| !k.is_empty())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[derive(Deserialize)]
 pub struct Config {
     prompt: String,

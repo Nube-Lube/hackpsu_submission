@@ -190,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/analyze", post(analyze))
         .route("/resolve", post(resolve))
         .route("/place", post(place))
-        .route("/floorplan", get(floorplan))
+        .route("/floorplan", get(floorplan).post(upload_floorplan))
         .route("/sfx/{file}", get(sfx))
         .route("/align", post(align))
         .route("/bounds", get(bounds))
@@ -460,6 +460,25 @@ async fn floorplan() -> impl IntoResponse {
         }
     }
     StatusCode::NOT_FOUND.into_response()
+}
+
+// A custom floor plan uploaded from the dashboard (PNG or JPEG, sniffed by magic bytes).
+// Whichever of the two files isn't written is removed so the freshest upload wins.
+async fn upload_floorplan(body: Bytes) -> StatusCode {
+    let (name, other) = if body.starts_with(&[0x89, b'P', b'N', b'G']) {
+        ("floorplan.png", "floorplan.jpg")
+    } else if body.starts_with(&[0xFF, 0xD8]) {
+        ("floorplan.jpg", "floorplan.png")
+    } else {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE;
+    };
+    match tokio::fs::write(name, &body).await {
+        Ok(()) => {
+            let _ = tokio::fs::remove_file(other).await;
+            StatusCode::NO_CONTENT
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 #[derive(Deserialize)]

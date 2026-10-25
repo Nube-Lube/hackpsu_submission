@@ -66,7 +66,7 @@
            background-size: 10% 10%;
            border: 1px solid rgba(255, 255, 255, .7); box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .8);
            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-    #plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    #plan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; object-fit: cover; }
     #trails { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
     .marker { position: absolute; transform: translate(-50%, -50%); }
     .cam { padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, .65); border: 1px solid rgba(255, 255, 255, .8);
@@ -106,12 +106,16 @@
     @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
 
     /* Google Maps alignment: frame the site once, snapshot it as the floor plan. */
-    #alignBtn { margin-top: 10px; padding: 10px 18px; border-radius: 12px; cursor: pointer; font-family: inherit;
-                font-size: 14px; font-weight: 650; color: var(--jade-ink);
-                border: 1px solid rgba(20, 157, 120, .35); background: rgba(20, 157, 120, .14); }
+    #floorBtns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; align-items: center; }
+    #floorBtns button { padding: 10px 18px; border-radius: 12px; cursor: pointer; font-family: inherit;
+                        font-size: 14px; font-weight: 650; color: var(--jade-ink);
+                        border: 1px solid rgba(20, 157, 120, .35); background: rgba(20, 157, 120, .14); }
+    #floorMsg { font-size: 12.5px; color: var(--ink-soft); }
+    #floorMsg.err { color: #c01037; }
     #alignWrap { position: fixed; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center;
                  padding: 20px; background: rgba(20, 32, 28, .45);
                  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    #alignWrap[hidden] { display: none; } /* the flex above must not override [hidden] */
     #alignCard { width: min(880px, 100%); background: rgba(246, 243, 234, .97); border: 1px solid rgba(255, 255, 255, .8);
                  border-radius: 20px; padding: 20px; box-shadow: 0 24px 70px rgba(21, 64, 48, .35); }
     #alignCard h2 { margin: 0 0 4px; }
@@ -134,6 +138,30 @@
                  background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
                  box-shadow: 0 4px 12px rgba(20, 157, 120, .3); }
     #alignSave:disabled { opacity: .5; }
+
+    /* Crop editor: fit an uploaded floor plan into the fixed site-map frame. */
+    #cropWrap { position: fixed; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center;
+                padding: 20px; background: rgba(20, 32, 28, .45);
+                backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    #cropWrap[hidden] { display: none; }
+    #cropCard { width: min(880px, 100%); background: rgba(246, 243, 234, .97); border: 1px solid rgba(255, 255, 255, .8);
+                border-radius: 20px; padding: 20px; box-shadow: 0 24px 70px rgba(21, 64, 48, .35); }
+    #cropCard h2 { margin: 0 0 4px; }
+    #cropStage { position: relative; width: 100%; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 14px;
+                 background: #dcd9cf; touch-action: none; cursor: grab; margin-top: 12px; }
+    #cropStage.grabbing { cursor: grabbing; }
+    #cropImg { position: absolute; user-select: none; -webkit-user-drag: none; max-width: none; pointer-events: none; }
+    #cropScaleRow { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+    #cropScale { flex: 1; accent-color: var(--jade); }
+    #cropBar { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 14px; }
+    #cropErr { flex: 1; color: #c01037; font-size: 13px; margin-right: 10px; }
+    #cropCancel { padding: 10px 18px; border-radius: 12px; cursor: pointer; font-family: inherit; font-size: 14px;
+                  font-weight: 650; color: var(--ink-soft); border: 1px solid var(--line); background: var(--glass); }
+    #cropSave { padding: 10px 22px; border-radius: 12px; cursor: pointer; font-family: inherit; font-size: 14px;
+                font-weight: 650; color: #fff; border: 1px solid rgba(255, 255, 255, .5);
+                background: linear-gradient(180deg, rgba(255, 255, 255, .25), rgba(255, 255, 255, 0) 42%), var(--jade);
+                box-shadow: 0 4px 12px rgba(20, 157, 120, .3); }
+    #cropSave:disabled { opacity: .5; }
 
     /* Embedded report screen (slides up from below the dashboard). */
     #rformWrap { max-width: 720px; margin: 0 auto; padding: 16px; }
@@ -159,7 +187,7 @@
             background-size: 10% 10%;
             border: 1px solid rgba(255, 255, 255, .7); box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .8);
             backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-    #rplan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    #rplan { position: absolute; inset: 0; width: 100%; height: 100%; display: none; object-fit: cover; }
     #rpin { position: absolute; display: none; width: 20px; height: 20px; border-radius: 50%; background: var(--jade);
             border: 2px solid #fff; transform: translate(-50%, -50%); box-shadow: 0 2px 8px rgba(21, 64, 48, .35); }
     #send { width: 100%; margin-top: 20px; padding: 14px; font-size: 18px; font-weight: 650; border-radius: 14px; cursor: pointer;
@@ -202,7 +230,12 @@
                   <div id="markers"></div>
                 </div>
                 <div id="tray"></div>
-                <button id="alignBtn" type="button">Align with Google Maps</button>
+                <div id="floorBtns">
+                  <button id="alignBtn" type="button">Align with Google Maps</button>
+                  <button id="uploadBtn" type="button">Upload floor plan</button>
+                  <input id="file" type="file" accept="image/png,image/jpeg" hidden>
+                  <span id="floorMsg"></span>
+                </div>
                 <p class="muted">Drag cameras onto the map where they are, or align with Google Maps to snapshot the site.</p>
               </section>
               <section>
@@ -275,6 +308,20 @@
     </div>
   </div>
 
+  <div id="cropWrap" hidden>
+    <div id="cropCard">
+      <h2>Fit the floor plan</h2>
+      <p class="muted">Drag the plan to move it and use the slider to resize it until it fills the frame the way the site map should show it.</p>
+      <div id="cropStage"><img id="cropImg" alt=""></div>
+      <div id="cropScaleRow">Size <input id="cropScale" type="range" min="100" max="400" value="100"></div>
+      <div id="cropBar">
+        <span id="cropErr"></span>
+        <button id="cropCancel" type="button">Cancel</button>
+        <button id="cropSave" type="button">Save floor plan</button>
+      </div>
+    </div>
+  </div>
+
   <div id="popup" role="status">
     <h3>Report submitted!</h3>
     <svg width="64" height="56" viewBox="0 0 56 48" fill="none">
@@ -296,14 +343,8 @@
     };
     const place = (node, pos) => { node.style.left = `${pos.x * 100}%`; node.style.top = `${pos.y * 100}%`; };
 
-    // Use the floor plan's own shape so map positions line up with the picture.
-    const adoptPlan = img => img.onload = () => {
-      const map = img.parentElement;
-      map.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
-      img.style.display = 'block';
-    };
-    adoptPlan($('plan'));
-    adoptPlan($('rplan'));
+    // The site map keeps a fixed size and 16:10 frame no matter what plan is loaded.
+    for (const img of [$('plan'), $('rplan')]) img.onload = () => img.style.display = 'block';
 
     // Dragging a camera chip onto the map saves its position on the server.
     let dragging = false;
@@ -499,7 +540,87 @@
     });
     $('popup').onclick = () => { clearTimeout(popupTimer); $('popup').classList.remove('on'); };
 
-    // ---- Google Maps alignment: frame the site, snapshot it as the floor plan ----
+    // ---- Floor plan: upload a custom image, crop it to the fixed frame, or frame the site on Google Maps ----
+    $('uploadBtn').onclick = () => $('file').click();
+    $('file').onchange = () => {
+      const file = $('file').files[0];
+      $('file').value = '';
+      if (file) openCrop(file);
+    };
+
+    // Crop editor: the plan is dragged and resized inside the fixed 16:10 frame;
+    // saving bakes exactly that view into the stored floor-plan image.
+    const crop = { img: $('cropImg'), url: '', base: 1, x: 0, y: 0 };
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+    function layoutCrop() {
+      const st = $('cropStage').getBoundingClientRect();
+      const s = crop.base * (+$('cropScale').value / 100);
+      const dw = crop.img.naturalWidth * s, dh = crop.img.naturalHeight * s;
+      crop.x = clamp(crop.x, st.width - dw, 0);
+      crop.y = clamp(crop.y, st.height - dh, 0);
+      crop.img.style.width = `${dw}px`; crop.img.style.height = `${dh}px`;
+      crop.img.style.left = `${crop.x}px`; crop.img.style.top = `${crop.y}px`;
+    }
+    function openCrop(file) {
+      $('cropErr').textContent = '';
+      $('cropScale').value = 100;
+      $('cropWrap').hidden = false; // lay the stage out before measuring it
+      if (crop.url) URL.revokeObjectURL(crop.url);
+      crop.url = URL.createObjectURL(file);
+      crop.img.onload = () => {
+        const st = $('cropStage').getBoundingClientRect();
+        // Start "cover": fill the frame completely, centered.
+        crop.base = Math.max(st.width / crop.img.naturalWidth, st.height / crop.img.naturalHeight);
+        crop.x = (st.width - crop.img.naturalWidth * crop.base) / 2;
+        crop.y = (st.height - crop.img.naturalHeight * crop.base) / 2;
+        layoutCrop();
+      };
+      crop.img.onerror = () => { $('cropWrap').hidden = true; $('cropErr').textContent = 'That file could not be read as an image.'; };
+      crop.img.src = crop.url;
+    }
+    (() => {
+      const stage = $('cropStage');
+      let dragging = null;
+      stage.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        dragging = { px: e.clientX, py: e.clientY, x: crop.x, y: crop.y };
+        stage.setPointerCapture(e.pointerId);
+        stage.classList.add('grabbing');
+      });
+      stage.addEventListener('pointermove', e => {
+        if (!dragging) return;
+        crop.x = dragging.x + (e.clientX - dragging.px);
+        crop.y = dragging.y + (e.clientY - dragging.py);
+        layoutCrop();
+      });
+      const stop = () => { dragging = null; stage.classList.remove('grabbing'); };
+      stage.addEventListener('pointerup', stop);
+      stage.addEventListener('pointercancel', stop);
+      $('cropScale').addEventListener('input', layoutCrop);
+      $('cropCancel').onclick = () => { $('cropWrap').hidden = true; };
+      $('cropSave').onclick = async () => {
+        $('cropSave').disabled = true;
+        try {
+          const st = $('cropStage').getBoundingClientRect();
+          const k = 1600 / st.width; // bake at high resolution, same 16:10 shape
+          const c = document.createElement('canvas');
+          c.width = 1600; c.height = 1000;
+          const s = crop.base * (+$('cropScale').value / 100) * k;
+          c.getContext('2d').drawImage(crop.img, crop.x * k, crop.y * k,
+            crop.img.naturalWidth * s, crop.img.naturalHeight * s);
+          const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+          const res = await fetch('/floorplan', { method: 'POST', body: blob });
+          if (!res.ok) throw new Error(await res.text());
+          $('plan').src = `/floorplan?v=${Date.now()}`;
+          $('rplan').src = $('plan').src;
+          $('cropWrap').hidden = true;
+        } catch (e) {
+          $('cropErr').textContent = `Could not save: ${e.message}`;
+        }
+        $('cropSave').disabled = false;
+      };
+    })();
+
     let gmap = null;
     const GMAPS_KEY = "__GMAPS_KEY__"; // filled in by the server from its own key
     $('alignBtn').onclick = async () => {
